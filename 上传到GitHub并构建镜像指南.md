@@ -23,7 +23,38 @@
 
 ## 📤 上传项目到 GitHub
 
-### 方法一：使用 Git 命令行（推荐）
+### ⚠️ 重要：先创建 GitHub 仓库
+
+**在执行 Git 命令之前，您需要先在 GitHub 上创建仓库！**
+
+### 步骤 1：在 GitHub 上创建仓库
+
+1. **登录 GitHub**
+   - 访问：https://github.com
+   - 使用您的账号 `Alice0422` 登录
+
+2. **创建新仓库**
+   - 点击右上角的 **+** 号 → 选择 **New repository**
+   - 或者直接访问：https://github.com/new
+
+3. **填写仓库信息**
+   - **Repository name**: `xiaozhi-esp32-server`（或您想要的其他名称）
+   - **Description**: 可选，例如：`小智ESP32后端服务`
+   - **Visibility**: 
+     - ✅ **Public**（公开）- 推荐，GitHub Container Registry 对公开仓库免费
+     - ⚠️ **Private**（私有）- 如果选择私有，需要确保 Token 有访问私有仓库的权限
+   - **不要勾选**以下选项（因为您要上传现有代码）：
+     - ❌ Add a README file
+     - ❌ Add .gitignore
+     - ❌ Choose a license
+   - 点击 **Create repository**
+
+4. **复制仓库地址**
+   - 创建成功后，GitHub 会显示仓库地址
+   - 例如：`https://github.com/Alice0422/xiaozhi-esp32-server.git`
+   - **保存这个地址，下一步会用到**
+
+### 步骤 2：使用 Git 命令行上传代码
 
 1. **初始化 Git 仓库**（如果还没有）
 ```bash
@@ -33,12 +64,14 @@ git init
 
 2. **添加远程仓库**
 ```bash
-# 如果您的仓库名是 xiaozhi-esp32-server
+# 使用刚才创建的仓库地址（替换为您的实际仓库名）
 git remote add origin https://github.com/Alice0422/xiaozhi-esp32-server.git
 
 # 或者使用 SSH（如果您配置了 SSH key）
 # git remote add origin git@github.com:Alice0422/xiaozhi-esp32-server.git
 ```
+
+**⚠️ 注意**：如果仓库名不是 `xiaozhi-esp32-server`，请替换为您实际创建的仓库名。
 
 3. **检查 .gitignore 文件**
 确保 `.gitignore` 文件存在且包含以下内容（项目已包含）：
@@ -73,8 +106,8 @@ git push -u origin master
 
 ### 方法二：使用 GitHub Desktop 或 VS Code
 
-1. 在 GitHub 上创建新仓库
-2. 使用 GitHub Desktop 或 VS Code 的 Git 功能上传
+1. **先在 GitHub 网页上创建新仓库**（参考上面的步骤 1）
+2. 使用 GitHub Desktop 或 VS Code 的 Git 功能上传代码
 
 ## 🔐 配置 GitHub Secrets
 
