@@ -1,0 +1,235 @@
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'main/xiaozhi-server/**'
+      - 'main/manager-api/**'
+      - 'main/manager-web/**'
+      - 'Dockerfile-server-base'
+      - 'Dockerfile-server'
+      - 'Dockerfile-web'
+      - '.github/workflows/docker-build.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'main/xiaozhi-server/**'
+      - 'main/manager-api/**'
+      - 'main/manager-web/**'
+      - 'Dockerfile-server-base'
+      - 'Dockerfile-server'
+      - 'Dockerfile-web'
+  release:
+    types: [created]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # 自动使用当前仓库的名称，格式：用户名/仓库名
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-server-base:
+    name: Build Server Base Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=server-base
+            type=raw,value=server-base-{{sha}}
+
+      - name: Build and push server-base image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile-server-base
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-server:
+    name: Build Server Image
+    runs-on: ubuntu-latest
+    needs: build-server-base
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.TOKEN }}
+
+      - name: Extract metadata for server-base
+        id: meta-base
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=server-base
+            type=raw,value=server-base-{{sha}}
+
+      - name: Extract metadata for server
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=server
+            type=raw,value=server-{{sha}}
+
+      - name: Determine base image tag
+        id: base-tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # For PR, use pr-XXX tag format
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            echo "base-image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:pr-${PR_NUMBER}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/master" ]; then
+            # For main/master branch, use server-base tag
+            echo "base-image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:server-base" >> $GITHUB_OUTPUT
+          else
+            # For other branches, use branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            echo "base-image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Dockerfile for server build
+        run: |
+          # Create a temporary Dockerfile that uses the correct base image
+          # 匹配任何以 ghcr.io/ 开头的基础镜像引用
+          sed "s|FROM ghcr.io/[^:]*:server-base|FROM ${{ steps.base-tag.outputs.base-image }}|g" \
+            Dockerfile-server > Dockerfile-server.tmp
+          mv Dockerfile-server.tmp Dockerfile-server
+
+      - name: Build and push server image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile-server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-web:
+    name: Build Web Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=web
+            type=raw,value=web-{{sha}}
+
+      - name: Build and push web image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile-web
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [build-server-base, build-server, build-web]
+    if: always()
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## Docker Images Build Summary 🐳" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Successfully Built Images:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server Base**: ${{ needs.build-server-base.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server**: ${{ needs.build-server.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Web**: ${{ needs.build-web.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Images are available at: https://github.com/${{ env.IMAGE_PREFIX }}/pkgs/container/xiaozhi-esp32-server" >> $GITHUB_STEP_SUMMARY
+

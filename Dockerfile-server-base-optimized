@@ -1,0 +1,57 @@
+# Dockerfile-server-base-optimized
+# 优化版：分批安装，减少内存占用
+FROM python:3.10-slim
+
+# 分批安装系统依赖，避免一次性占用太多内存
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libopus0 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends locales && \
+    sed -i '/zh_CN.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# 配置pip使用国内镜像源（阿里云）并设置超时和重试
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip config set global.timeout 120 && \
+    pip config set install.retries 5
+
+# 设置环境变量以确保正确的字符编码
+ENV LANG=zh_CN.UTF-8 \
+    LC_ALL=zh_CN.UTF-8 \
+    LANGUAGE=zh_CN:zh \
+    PYTHONIOENCODING=utf-8
+
+WORKDIR /opt/xiaozhi-esp32-server
+
+# 复制requirements.txt
+COPY main/xiaozhi-server/requirements.txt .
+
+# 分批安装Python依赖，避免内存不足
+# 先安装基础包
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# 安装核心依赖（分批）
+RUN pip install --no-cache-dir torch==2.2.2 torchaudio==2.2.2 numpy==1.26.4 --default-timeout=120 --retries 5
+
+# 安装其他依赖
+RUN pip install --no-cache-dir -r requirements.txt --default-timeout=120 --retries 5
+
+
+
+
+
+
+
+
+
