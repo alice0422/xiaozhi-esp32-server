@@ -24,19 +24,22 @@ on:
       - 'Dockerfile-server-base'
       - 'Dockerfile-server'
       - 'Dockerfile-web'
+    # 跳过 Dependabot 的 PR，避免构建失败（Dependabot PR 无法访问 secrets）
+    types: [opened, synchronize, reopened, ready_for_review]
   release:
     types: [created]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  # 自动使用当前仓库的名称，格式：用户名/仓库名
-  IMAGE_PREFIX: ${{ github.repository }}
+  # 注意：IMAGE_PREFIX 会在每个 job 中转换为小写（见下方步骤）
 
 jobs:
   build-server-base:
     name: Build Server Base Image
     runs-on: ubuntu-latest
+    # 跳过 Dependabot 的 PR，因为无法访问 secrets
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       packages: write
@@ -46,6 +49,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set image prefix (lowercase)
+        id: set-image-prefix
+        run: |
+          # 将仓库名称转换为小写，因为 Docker 镜像名称必须全部小写
+          IMAGE_PREFIX=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> $GITHUB_ENV
+          echo "image-prefix=${IMAGE_PREFIX}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -86,6 +97,8 @@ jobs:
     name: Build Server Image
     runs-on: ubuntu-latest
     needs: build-server-base
+    # 跳过 Dependabot 的 PR，因为无法访问 secrets
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       packages: write
@@ -95,6 +108,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set image prefix (lowercase)
+        id: set-image-prefix
+        run: |
+          # 将仓库名称转换为小写，因为 Docker 镜像名称必须全部小写
+          IMAGE_PREFIX=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> $GITHUB_ENV
+          echo "image-prefix=${IMAGE_PREFIX}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -135,17 +156,19 @@ jobs:
       - name: Determine base image tag
         id: base-tag
         run: |
+          # 确保使用小写的镜像名称
+          IMAGE_PREFIX_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # For PR, use pr-XXX tag format
             PR_NUMBER="${{ github.event.pull_request.number }}"
-            echo "base-image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:pr-${PR_NUMBER}" >> $GITHUB_OUTPUT
+            echo "base-image=${{ env.REGISTRY }}/${IMAGE_PREFIX_LOWER}:pr-${PR_NUMBER}" >> $GITHUB_OUTPUT
           elif [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/master" ]; then
             # For main/master branch, use server-base tag
-            echo "base-image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:server-base" >> $GITHUB_OUTPUT
+            echo "base-image=${{ env.REGISTRY }}/${IMAGE_PREFIX_LOWER}:server-base" >> $GITHUB_OUTPUT
           else
             # For other branches, use branch name
             BRANCH_NAME="${{ github.ref_name }}"
-            echo "base-image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${BRANCH_NAME}" >> $GITHUB_OUTPUT
+            echo "base-image=${{ env.REGISTRY }}/${IMAGE_PREFIX_LOWER}:${BRANCH_NAME}" >> $GITHUB_OUTPUT
           fi
 
       - name: Update Dockerfile for server build
@@ -171,6 +194,8 @@ jobs:
   build-web:
     name: Build Web Image
     runs-on: ubuntu-latest
+    # 跳过 Dependabot 的 PR，因为无法访问 secrets
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       packages: write
@@ -180,6 +205,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set image prefix (lowercase)
+        id: set-image-prefix
+        run: |
+          # 将仓库名称转换为小写，因为 Docker 镜像名称必须全部小写
+          IMAGE_PREFIX=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> $GITHUB_ENV
+          echo "image-prefix=${IMAGE_PREFIX}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
