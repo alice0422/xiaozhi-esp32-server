@@ -1,0 +1,8 @@
+# 生产镜像，仅包含应用代码
+ARG SERVER_BASE_IMAGE=ghcr.io/alice0422/xiaozhi-esp32-server:server-base
+FROM ${SERVER_BASE_IMAGE}
+
+COPY main/xiaozhi-server .
+
+# 启动应用
+CMD ["python", "app.py"]
