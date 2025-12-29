@@ -5,6 +5,7 @@ import hashlib
 import asyncio
 import websockets
 import opuslib_next
+import gc
 from time import mktime
 from datetime import datetime
 from urllib.parse import urlencode
@@ -34,9 +35,6 @@ class ASRProvider(ASRProviderBase):
         self.forward_task = None
         self.is_processing = False
         self.server_ready = False
-        self.last_frame_sent = False  # 标记是否已发送最终帧
-        self.best_text = ""  # 保存最佳识别结果
-        self.has_final_result = False  # 标记是否收到最终识别结果
 
         # 讯飞配置
         self.app_id = config.get("app_id")
@@ -51,7 +49,6 @@ class ASRProvider(ASRProviderBase):
             "domain": config.get("domain", "slm"),
             "language": config.get("language", "zh_cn"),
             "accent": config.get("accent", "mandarin"),
-            "dwa": config.get("dwa", "wpgs"),
             "result": {"encoding": "utf8", "compress": "raw", "format": "plain"},
         }
 
@@ -115,7 +112,7 @@ class ASRProvider(ASRProviderBase):
                 await self._start_recognition(conn)
             except Exception as e:
                 logger.bind(tag=TAG).error(f"建立ASR连接失败: {str(e)}")
-                await self._cleanup(conn)
+                await self._cleanup()
                 return
 
         # 发送当前音频数据
@@ -125,7 +122,7 @@ class ASRProvider(ASRProviderBase):
                 await self._send_audio_frame(pcm_frame, STATUS_CONTINUE_FRAME)
             except Exception as e:
                 logger.bind(tag=TAG).warning(f"发送音频数据时发生错误: {e}")
-                await self._cleanup(conn)
+                await self._cleanup()
 
     async def _start_recognition(self, conn):
         """开始识别会话"""
@@ -134,6 +131,10 @@ class ASRProvider(ASRProviderBase):
             # 建立WebSocket连接
             ws_url = self.create_url()
             logger.bind(tag=TAG).info(f"正在连接ASR服务: {ws_url[:50]}...")
+
+            # 如果为手动模式,设置超时时长为一分钟
+            if conn.client_listen_mode == "manual":
+                self.iat_params["eos"] = 60000
 
             self.asr_ws = await websockets.connect(
                 ws_url,
@@ -145,8 +146,6 @@ class ASRProvider(ASRProviderBase):
 
             logger.bind(tag=TAG).info("ASR WebSocket连接已建立")
             self.server_ready = False
-            self.last_frame_sent = False
-            self.best_text = ""
             self.forward_task = asyncio.create_task(self._forward_results(conn))
 
             # 发送首帧音频
@@ -195,23 +194,12 @@ class ASRProvider(ASRProviderBase):
 
         await self.asr_ws.send(json.dumps(frame_data, ensure_ascii=False))
 
-        # 标记是否发送了最终帧
-        if status == STATUS_LAST_FRAME:
-            self.last_frame_sent = True
-            logger.bind(tag=TAG).info("标记最终帧已发送")
-
     async def _forward_results(self, conn):
         """转发识别结果"""
         try:
-            while self.asr_ws and not conn.stop_event.is_set():
-                # 获取当前连接的音频数据
-                audio_data = getattr(conn, "asr_audio_for_voiceprint", [])
+            while not conn.stop_event.is_set():
                 try:
-                    # 如果已发送最终帧，增加超时时间等待完整结果
-                    timeout = 3.0 if self.last_frame_sent else 30.0
-                    response = await asyncio.wait_for(
-                        self.asr_ws.recv(), timeout=timeout
-                    )
+                    response = await asyncio.wait_for(self.asr_ws.recv(), timeout=60)
                     result = json.loads(response)
                     logger.bind(tag=TAG).debug(f"收到ASR结果: {result}")
 
@@ -235,144 +223,27 @@ class ASRProvider(ASRProviderBase):
                             # 解码base64文本
                             decoded_text = base64.b64decode(text_data).decode("utf-8")
                             text_json = json.loads(decoded_text)
-
                             # 提取文本内容
                             text_ws = text_json.get("ws", [])
-                            result_text = ""
                             for i in text_ws:
                                 for j in i.get("cw", []):
                                     w = j.get("w", "")
-                                    result_text += w
+                                    self.text += w
 
-                            # 更新识别文本 - 实时更新策略
-                            # 只检查是否为空字符串，不再过滤任何标点符号
-                            # 这样可以确保所有识别到的内容，包括标点符号都能被实时更新
-                            if result_text and result_text.strip():
-                                # 实时更新：正常情况下都更新，提高响应速度
-                                should_update = True
-
-                                # 保存最佳文本
-                                # 1. 如果是识别完成状态或最终帧后收到的结果，优先保存
-                                # 2. 否则保存最长的有意义文本
-                                # 取消对标点符号的过滤，只检查是否为空
-                                # 这样可以保留所有识别到的内容，包括各种标点符号
-                                is_valid_text = len(result_text.strip()) > 0
-
-                                if (
-                                    self.last_frame_sent or status == 2
-                                ) and is_valid_text:
-                                    self.best_text = result_text
-                                    self.has_final_result = True  # 标记已收到最终结果
-                                    logger.bind(tag=TAG).debug(
-                                        f"保存最终识别结果: {self.best_text}"
-                                    )
-                                elif (
-                                    len(result_text) > len(self.best_text)
-                                    and is_valid_text
-                                    and not self.has_final_result
-                                ):
-                                    self.best_text = result_text
-                                    logger.bind(tag=TAG).debug(
-                                        f"保存中间最佳文本: {self.best_text}"
-                                    )
-
-                                # 如果已发送最终帧，只过滤空文本
-                                if self.last_frame_sent:
-                                    # 只拒绝完全空的结果
-                                    if not result_text.strip():
-                                        should_update = False
-                                        logger.bind(tag=TAG).warning(
-                                            f"最终帧后拒绝空文本"
-                                        )
-
-                                if should_update:
-                                    # 处理流式识别结果，避免简单替换导致内容丢失
-                                    # 1. 如果是中间状态（非最终帧后），可能需要替换为更完整的识别
-                                    # 2. 如果是最终帧后收到的结果，可能是对前面文本的补充
-                                    if self.last_frame_sent:
-                                        # 最终帧后收到的结果可能是标点符号等补充内容
-                                        # 检查是否需要合并文本而不是替换
-                                        # 如果当前文本是纯标点而前面已有内容，应该追加而不是替换
-                                        if len(
-                                            self.text
-                                        ) > 0 and result_text.strip() in [
-                                            "。",
-                                            ".",
-                                            "?",
-                                            "？",
-                                            "!",
-                                            "！",
-                                            ",",
-                                            "，",
-                                            ";",
-                                            "；",
-                                        ]:
-                                            # 对于标点符号，追加到现有文本后
-                                            self.text = (
-                                                self.text.rstrip().rstrip("。.")
-                                                + result_text
-                                            )
-                                        else:
-                                            # 其他情况保持替换逻辑
-                                            self.text = result_text
-                                    else:
-                                        # 中间状态替换为新的识别结果
-                                        self.text = result_text
-
-                                    logger.bind(tag=TAG).info(
-                                        f"实时更新识别文本: {self.text} (最终帧已发送: {self.last_frame_sent})"
-                                    )
-
-                    # 识别完成，但如果还没发送最终帧，继续等待
                     if status == 2:
-                        logger.bind(tag=TAG).info(
-                            f"识别完成状态已到达，当前识别文本: {self.text}"
-                        )
-
-                        # 如果还没发送最终帧，继续等待
-                        if not self.last_frame_sent:
-                            logger.bind(tag=TAG).info(
-                                "识别完成但最终帧未发送，继续等待..."
-                            )
-                            continue
-
-                        # 已发送最终帧且收到完成状态，使用最佳策略选择最终结果
-                        # 优先使用识别完成状态下的最新结果，而不是仅仅基于长度
-                        if self.best_text:
-                            # 如果当前文本是在最终帧发送后或识别完成状态下收到的，优先使用
-                            if (
-                                self.last_frame_sent or status == 2
-                            ) and self.text.strip():
-                                logger.bind(tag=TAG).info(
-                                    f"使用完成状态下的最新识别结果: {self.text}"
-                                )
-                            elif len(self.best_text) > len(self.text):
-                                logger.bind(tag=TAG).info(
-                                    f"使用更长的最佳文本作为最终结果: {self.text} -> {self.best_text}"
-                                )
-                                self.text = self.best_text
-
-                        logger.bind(tag=TAG).info(f"获取到最终完整文本: {self.text}")
+                        if conn.client_listen_mode == "manual":
+                            audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
+                            if len(audio_data) > 0:
+                                logger.bind(tag=TAG).debug("收到最终识别结果，触发处理")
+                                await self.handle_voice_stop(conn, audio_data)
+                                # 清理音频缓存
+                                conn.asr_audio.clear()
                         conn.reset_vad_states()
-                        if len(audio_data) > 15:  # 确保有足够音频数据
-                            # 准备处理结果
-                            pass
                         break
 
                 except asyncio.TimeoutError:
-                    if self.last_frame_sent:
-                        # 超时时也使用最佳文本
-                        if self.best_text and len(self.best_text) > len(self.text):
-                            logger.bind(tag=TAG).info(
-                                f"超时，使用最佳文本: {self.text} -> {self.best_text}"
-                            )
-                            self.text = self.best_text
-                        logger.bind(tag=TAG).info(
-                            f"最终帧后超时，使用结果: {self.text}"
-                        )
-                        break
-                    # 如果还没发送最终帧，继续等待
-                    continue
+                    logger.bind(tag=TAG).error("接收结果超时")
+                    break
                 except websockets.ConnectionClosed:
                     logger.bind(tag=TAG).info("ASR服务连接已关闭")
                     self.is_processing = False
@@ -389,17 +260,15 @@ class ASRProvider(ASRProviderBase):
             if hasattr(e, "__cause__") and e.__cause__:
                 logger.bind(tag=TAG).error(f"错误原因: {str(e.__cause__)}")
         finally:
-            if self.asr_ws:
-                await self.asr_ws.close()
-                self.asr_ws = None
-            self.is_processing = False
+            # 清理连接资源
+            await self._cleanup()
+
+            # 清理连接的音频缓存
             if conn:
                 if hasattr(conn, "asr_audio_for_voiceprint"):
                     conn.asr_audio_for_voiceprint = []
                 if hasattr(conn, "asr_audio"):
                     conn.asr_audio = []
-                if hasattr(conn, "has_valid_voice"):
-                    conn.has_valid_voice = False
 
     async def handle_voice_stop(self, conn, asr_audio_task: List[bytes]):
         """处理语音停止，发送最后一帧并处理识别结果"""
@@ -407,22 +276,13 @@ class ASRProvider(ASRProviderBase):
             # 先发送最后一帧表示音频结束
             if self.asr_ws and self.is_processing:
                 try:
-                    # 取最后一个有效的音频帧作为最后一帧数据
-                    last_frame = b""
-                    if asr_audio_task:
-                        last_audio = asr_audio_task[-1]
-                        last_frame = self.decoder.decode(last_audio, 960)
-                    await self._send_audio_frame(last_frame, STATUS_LAST_FRAME)
-                    logger.bind(tag=TAG).info("已发送最后一帧")
+                    await self._send_audio_frame(b"", STATUS_LAST_FRAME)
+                    logger.bind(tag=TAG).debug(f"已发送停止请求")
 
-                    # 发送最终帧后，给_forward_results适当时间处理最终结果
                     await asyncio.sleep(0.25)
-
-                    logger.bind(tag=TAG).info(f"准备处理最终识别结果: {self.text}")
                 except Exception as e:
-                    logger.bind(tag=TAG).error(f"发送最后一帧失败: {e}")
+                    logger.bind(tag=TAG).error(f"发送停止请求失败: {e}")
 
-            # 调用父类的handle_voice_stop方法处理识别结果
             await super().handle_voice_stop(conn, asr_audio_task)
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理语音停止失败: {e}")
@@ -436,40 +296,27 @@ class ASRProvider(ASRProviderBase):
             self.asr_ws = None
         self.is_processing = False
 
-    async def _cleanup(self, conn):
-        """清理资源"""
-        logger.bind(tag=TAG).info(
+    async def _send_stop_request(self):
+        """发送停止识别请求（不关闭连接）"""
+        if self.asr_ws:
+            try:
+                # 先停止音频发送
+                self.is_processing = False
+                await self._send_audio_frame(b"", STATUS_LAST_FRAME)
+                logger.bind(tag=TAG).debug("已发送停止请求")
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"发送停止请求失败: {e}")
+
+    async def _cleanup(self):
+        """清理资源（关闭连接）"""
+        logger.bind(tag=TAG).debug(
             f"开始ASR会话清理 | 当前状态: processing={self.is_processing}, server_ready={self.server_ready}"
         )
-
-        # 发送最后一帧
-        if self.asr_ws and self.is_processing:
-            try:
-                await self._send_audio_frame(b"", STATUS_LAST_FRAME)
-                await asyncio.sleep(0.1)
-                logger.bind(tag=TAG).info("已发送最后一帧")
-            except Exception as e:
-                logger.bind(tag=TAG).error(f"发送最后一帧失败: {e}")
 
         # 状态重置
         self.is_processing = False
         self.server_ready = False
-        self.last_frame_sent = False
-        self.best_text = ""
-        self.has_final_result = False
-        logger.bind(tag=TAG).info("ASR状态已重置")
-
-        # 清理任务
-        if self.forward_task and not self.forward_task.done():
-            self.forward_task.cancel()
-            try:
-                await asyncio.wait_for(self.forward_task, timeout=1.0)
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.bind(tag=TAG).debug(f"forward_task取消异常: {e}")
-            finally:
-                self.forward_task = None
+        logger.bind(tag=TAG).debug("ASR状态已重置")
 
         # 关闭连接
         if self.asr_ws:
@@ -482,16 +329,10 @@ class ASRProvider(ASRProviderBase):
             finally:
                 self.asr_ws = None
 
-        # 清理连接的音频缓存
-        if conn:
-            if hasattr(conn, "asr_audio_for_voiceprint"):
-                conn.asr_audio_for_voiceprint = []
-            if hasattr(conn, "asr_audio"):
-                conn.asr_audio = []
-            if hasattr(conn, "has_valid_voice"):
-                conn.has_valid_voice = False
+        # 清理任务引用
+        self.forward_task = None
 
-        logger.bind(tag=TAG).info("ASR会话清理完成")
+        logger.bind(tag=TAG).debug("ASR会话清理完成")
 
     async def speech_to_text(self, opus_data, session_id, audio_format):
         """获取识别结果"""
@@ -512,6 +353,16 @@ class ASRProvider(ASRProviderBase):
                 pass
             self.forward_task = None
         self.is_processing = False
+
+        # 显式释放decoder资源
+        if hasattr(self, 'decoder') and self.decoder is not None:
+            try:
+                del self.decoder
+                self.decoder = None
+                logger.bind(tag=TAG).debug("Xunfei decoder resources released")
+            except Exception as e:
+                logger.bind(tag=TAG).debug(f"释放Xunfei decoder资源时出错: {e}")
+
         # 清理所有连接的音频缓冲区
         if hasattr(self, "_connections"):
             for conn in self._connections.values():
@@ -519,5 +370,3 @@ class ASRProvider(ASRProviderBase):
                     conn.asr_audio_for_voiceprint = []
                 if hasattr(conn, "asr_audio"):
                     conn.asr_audio = []
-                if hasattr(conn, "has_valid_voice"):
-                    conn.has_valid_voice = False

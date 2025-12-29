@@ -23,7 +23,7 @@
       <div class="settings-btn" @click="handleConfigure">
         {{ $t('home.configureRole') }}
       </div>
-      <div class="settings-btn" @click="handleVoicePrint">
+      <div v-if="featureStatus.voiceprintRecognition" class="settings-btn" @click="handleVoicePrint">
         {{ $t('home.voiceprintRecognition') }}
       </div>
       <div class="settings-btn" @click="handleDeviceManage">
@@ -49,7 +49,15 @@ import i18n from '@/i18n';
 export default {
   name: 'DeviceItem',
   props: {
-    device: { type: Object, required: true }
+    device: { type: Object, required: true },
+    featureStatus: { 
+      type: Object, 
+      default: () => ({
+        voiceprintRecognition: false,
+        voiceClone: false,
+        knowledgeBase: false
+      })
+    }
   },
   data() {
     return { switchValue: false }

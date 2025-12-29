@@ -4,7 +4,6 @@
 """
 
 import os
-import cnlunar
 from typing import Dict, Any
 from config.logger import setup_logging
 from jinja2 import Template
@@ -60,6 +59,11 @@ class PromptManager:
 
         self.cache_manager = cache_manager
         self.CacheType = CacheType
+        
+        # 初始化上下文源
+        from core.utils.context_provider import ContextDataProvider
+        self.context_provider = ContextDataProvider(config, self.logger)
+        self.context_data = {}
 
         self._load_base_template()
 
@@ -180,10 +184,33 @@ class PromptManager:
     def update_context_info(self, conn, client_ip: str):
         """同步更新上下文信息"""
         try:
-            # 获取位置信息（使用全局缓存）
-            local_address = self._get_location_info(client_ip)
-            # 获取天气信息（使用全局缓存）
-            self._get_weather_info(conn, local_address)
+            local_address = ""
+            if (
+                client_ip
+                and self.base_prompt_template
+                and (
+                    "local_address" in self.base_prompt_template
+                    or "weather_info" in self.base_prompt_template
+                )
+            ):
+                # 获取位置信息（使用全局缓存）
+                local_address = self._get_location_info(client_ip)
+
+            if (
+                self.base_prompt_template
+                and "weather_info" in self.base_prompt_template
+                and local_address
+            ):
+                # 获取天气信息（使用全局缓存）
+                self._get_weather_info(conn, local_address)
+            
+            # 获取配置的上下文数据
+            if hasattr(conn, "device_id") and conn.device_id:
+                if self.base_prompt_template and "dynamic_context" in self.base_prompt_template:
+                    self.context_data = self.context_provider.fetch_all(conn.device_id)
+                else:
+                    self.context_data = ""
+                
             self.logger.bind(tag=TAG).debug(f"上下文信息更新完成")
 
         except Exception as e:
@@ -230,6 +257,7 @@ class PromptManager:
                 emojiList=EMOJI_List,
                 device_id=device_id,
                 client_ip=client_ip,
+                dynamic_context=self.context_data,
                 *args,
                 **kwargs,
             )

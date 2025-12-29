@@ -95,4 +95,9 @@ export default class BlockingQueue {
     get length() {
         return this.#items.length;
     }
+
+    /* 清空队列（保持对象引用，不影响等待者） */
+    clear() {
+        this.#items.length = 0;
+    }
 }

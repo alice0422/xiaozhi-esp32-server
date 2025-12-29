@@ -107,3 +107,14 @@ docker images | grep xiaozhi-esp32-server
 
 
 
+
+
+
+
+
+
+
+
+
+
+

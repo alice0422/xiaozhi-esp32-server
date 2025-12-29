@@ -39,8 +39,9 @@
           </template>
 
           <template v-else>
-            <DeviceItem v-for="(item, index) in devices" :key="index" :device="item" @configure="goToRoleConfig"
-              @deviceManage="handleDeviceManage" @delete="handleDeleteAgent" @chat-history="handleShowChatHistory" />
+            <DeviceItem v-for="(item, index) in devices" :key="index" :device="item" :feature-status="featureStatus" 
+              @configure="goToRoleConfig" @deviceManage="handleDeviceManage" @delete="handleDeleteAgent" 
+              @chat-history="handleShowChatHistory" />
           </template>
         </div>
       </div>
@@ -61,6 +62,7 @@ import ChatHistoryDialog from '@/components/ChatHistoryDialog.vue';
 import DeviceItem from '@/components/DeviceItem.vue';
 import HeaderBar from '@/components/HeaderBar.vue';
 import VersionFooter from '@/components/VersionFooter.vue';
+import featureManager from '@/utils/featureManager';
 
 export default {
   name: 'HomePage',
@@ -76,15 +78,33 @@ export default {
       skeletonCount: localStorage.getItem('skeletonCount') || 8,
       showChatHistory: false,
       currentAgentId: '',
-      currentAgentName: ''
+      currentAgentName: '',
+      // 功能状态
+      featureStatus: {
+        voiceprintRecognition: false,
+        voiceClone: false,
+        knowledgeBase: false
+      }
     }
   },
 
-  mounted() {
+  async mounted() {
     this.fetchAgentList();
+    await this.loadFeatureStatus();
   },
 
   methods: {
+    // 加载功能状态
+    async loadFeatureStatus() {
+      await featureManager.waitForInitialization();
+      const config = featureManager.getConfig();
+      this.featureStatus = {
+        voiceprintRecognition: config.voiceprintRecognition,
+        voiceClone: config.voiceClone,
+        knowledgeBase: config.knowledgeBase
+      };
+    },
+    
     showAddDialog() {
       this.addDeviceDialogVisible = true
     },

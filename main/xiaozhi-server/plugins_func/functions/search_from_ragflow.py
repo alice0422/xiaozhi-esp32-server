@@ -32,9 +32,10 @@ def search_from_ragflow(conn, question=None):
     else:
         question = str(question) if question is not None else ""
 
-    base_url = conn.config["plugins"]["search_from_ragflow"].get("base_url", "")
-    api_key = conn.config["plugins"]["search_from_ragflow"].get("api_key", "")
-    dataset_ids = conn.config["plugins"]["search_from_ragflow"].get("dataset_ids", [])
+    ragflow_config = conn.config.get("plugins", {}).get("search_from_ragflow", {})
+    base_url = ragflow_config.get("base_url", "")
+    api_key = ragflow_config.get("api_key", "")
+    dataset_ids = ragflow_config.get("dataset_ids", [])
 
     url = base_url + "/api/v1/retrieval"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}

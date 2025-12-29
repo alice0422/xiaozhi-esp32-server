@@ -4,7 +4,7 @@
       <!-- 左侧元素 -->
       <div class="header-left" @click="goHome">
         <img loading="lazy" alt="" src="@/assets/xiaozhi-logo.png" class="logo-img" />
-        <img loading="lazy" alt="" src="@/assets/xiaozhi-ai.png" class="brand-img" />
+        <img loading="lazy" alt="" :src="xiaozhiAiIcon" class="brand-img" />
       </div>
 
       <!-- 中间导航菜单 -->
@@ -26,7 +26,7 @@
           <span class="nav-text">{{ $t("header.smartManagement") }}</span>
         </div>
         <!-- 普通用户显示音色克隆 -->
-        <div v-if="!isSuperAdmin" class="equipment-management"
+        <div v-if="!isSuperAdmin && featureStatus.voiceClone" class="equipment-management"
           :class="{ 'active-tab': $route.path === '/voice-clone-management' }" @click="goVoiceCloneManagement">
           <img loading="lazy" alt="" src="@/assets/header/voice.png" :style="{
             filter:
@@ -38,7 +38,7 @@
         </div>
 
         <!-- 超级管理员显示音色克隆下拉菜单 -->
-        <el-dropdown v-if="isSuperAdmin" trigger="click" class="equipment-management more-dropdown" :class="{
+        <el-dropdown v-if="isSuperAdmin && featureStatus.voiceClone" trigger="click" class="equipment-management more-dropdown" :class="{
           'active-tab':
             $route.path === '/voice-clone-management' ||
             $route.path === '/voice-resource-management',
@@ -72,7 +72,7 @@
           }" />
           <span class="nav-text">{{ $t("header.modelConfig") }}</span>
         </div>
-        <div class="equipment-management"
+        <div v-if="featureStatus.knowledgeBase" class="equipment-management"
           :class="{ 'active-tab': $route.path === '/knowledge-base-management' || $route.path === '/knowledge-file-upload' }"
           @click="goKnowledgeBaseManagement">
           <img loading="lazy" alt="" src="@/assets/header/knowledge_base.png" :style="{
@@ -89,7 +89,8 @@
             $route.path === '/server-side-management' ||
             $route.path === '/agent-template-management' ||
             $route.path === '/ota-management' ||
-            $route.path === '/user-management',
+            $route.path === '/user-management' ||
+            $route.path === '/feature-management',
         }" @visible-change="handleParamDropdownVisibleChange">
           <span class="el-dropdown-link">
             <img loading="lazy" alt="" src="@/assets/header/param_management.png" :style="{
@@ -100,7 +101,8 @@
                   $route.path === '/server-side-management' ||
                   $route.path === '/agent-template-management' ||
                   $route.path === '/ota-management' ||
-                  $route.path === '/user-management'
+                  $route.path === '/user-management' ||
+                  $route.path === '/feature-management'
                   ? 'brightness(0) invert(1)'
                   : 'None',
             }" />
@@ -129,6 +131,9 @@
             <el-dropdown-item @click.native="goServerSideManagement">
               {{ $t("header.serverSideManagement") }}
             </el-dropdown-item>
+            <el-dropdown-item @click.native="goFeatureManagement">
+                {{ $t("header.featureManagement") }}
+              </el-dropdown-item>
           </el-dropdown-menu>
         </el-dropdown>
       </div>
@@ -186,6 +191,7 @@ import userApi from "@/apis/module/user";
 import i18n, { changeLanguage } from "@/i18n";
 import { mapActions, mapGetters } from "vuex";
 import ChangePasswordDialog from "./ChangePasswordDialog.vue"; // 引入修改密码弹窗组件
+import featureManager from "@/utils/featureManager"; // 引入功能管理工具类
 
 export default {
   name: "HeaderBar",
@@ -217,6 +223,11 @@ export default {
         label: "label",
         children: "children",
       },
+      // 功能状态
+      featureStatus: {
+        voiceClone: false, // 音色克隆功能状态
+        knowledgeBase: false, // 知识库功能状态
+      },
     };
   },
   computed: {
@@ -244,6 +255,24 @@ export default {
           return this.$t("language.vi");
         default:
           return this.$t("language.zhCN");
+      }
+    },
+    // 根据当前语言获取对应的xiaozhi-ai图标
+    xiaozhiAiIcon() {
+      const currentLang = this.currentLanguage;
+      switch (currentLang) {
+        case "zh_CN":
+          return require("@/assets/xiaozhi-ai.png");
+        case "zh_TW":
+          return require("@/assets/xiaozhi-ai_zh_TW.png");
+        case "en":
+          return require("@/assets/xiaozhi-ai_en.png");
+        case "de":
+          return require("@/assets/xiaozhi-ai_de.png");
+        case "vi":
+          return require("@/assets/xiaozhi-ai_vi.png");
+        default:
+          return require("@/assets/xiaozhi-ai.png");
       }
     },
     // 用户菜单选项
@@ -286,12 +315,14 @@ export default {
       ];
     },
   },
-  mounted() {
+  async mounted() {
     this.fetchUserInfo();
     this.checkScreenSize();
     window.addEventListener("resize", this.checkScreenSize);
     // 从localStorage加载搜索历史
     this.loadSearchHistory();
+    // 等待featureManager初始化完成后再加载功能状态
+    await this.loadFeatureStatus();
   },
   //移除事件监听器
   beforeDestroy() {
@@ -337,6 +368,20 @@ export default {
     // 添加默认角色模板管理导航方法
     goAgentTemplateManagement() {
       this.$router.push("/agent-template-management");
+    },
+    // 跳转到功能管理
+    goFeatureManagement() {
+      this.$router.push("/feature-management");
+    },
+    // 加载功能状态
+    async loadFeatureStatus() {
+      // 等待featureManager初始化完成
+      await featureManager.waitForInitialization();
+      
+      const config = featureManager.getConfig();
+      
+      this.featureStatus.voiceClone = config.voiceClone;
+      this.featureStatus.knowledgeBase = config.knowledgeBase;
     },
     // 获取用户信息
     fetchUserInfo() {

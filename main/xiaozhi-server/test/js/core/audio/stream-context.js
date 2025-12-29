@@ -22,6 +22,7 @@ export class StreamingContext {
         this.source = null;       // 当前音频源
         this.totalSamples = 0;    // 累积的总样本数
         this.lastPlayTime = 0;    // 上次播放的时间戳
+        this.scheduledEndTime = 0; // 已调度音频的结束时间
     }
 
     // 缓存音频数组
@@ -31,17 +32,19 @@ export class StreamingContext {
 
     // 获取需要处理缓存队列，单线程：在audioBufferQueue一直更新的状态下不会出现安全问题
     async getPendingAudioBufferQueue() {
-        // 原子交换 + 清空
-        [this.pendingAudioBufferQueue, this.audioBufferQueue] = [await this.audioBufferQueue.dequeue(), new BlockingQueue()];
+        // 等待数据到达并获取
+        const data = await this.audioBufferQueue.dequeue();
+        // 赋值给待处理队列
+        this.pendingAudioBufferQueue = data;
     }
 
     // 获取正在播放已解码的PCM队列，单线程：在activeQueue一直更新的状态下不会出现安全问题
     async getQueue(minSamples) {
-        let TepArray = [];
         const num = minSamples - this.queue.length > 0 ? minSamples - this.queue.length : 1;
-        // 原子交换 + 清空
-        [TepArray, this.activeQueue] = [await this.activeQueue.dequeue(num), new BlockingQueue()];
-        this.queue.push(...TepArray);
+
+        // 等待数据并获取
+        const tempArray = await this.activeQueue.dequeue(num);
+        this.queue.push(...tempArray);
     }
 
     // 将Int16音频数据转换为Float32音频数据
@@ -52,6 +55,57 @@ export class StreamingContext {
             float32Data[i] = int16Data[i] / 32768.0;
         }
         return float32Data;
+    }
+
+    // 获取待解码包数
+    getPendingDecodeCount() {
+        return this.audioBufferQueue.length + this.pendingAudioBufferQueue.length;
+    }
+
+    // 获取待播放样本数（转换为包数，每包960样本）
+    getPendingPlayCount() {
+        // 计算已在队列中的样本
+        const queuedSamples = this.activeQueue.length + this.queue.length;
+
+        // 计算已调度但未播放的样本（在Web Audio缓冲区中）
+        let scheduledSamples = 0;
+        if (this.playing && this.scheduledEndTime) {
+            const currentTime = this.audioContext.currentTime;
+            const remainingTime = Math.max(0, this.scheduledEndTime - currentTime);
+            scheduledSamples = Math.floor(remainingTime * this.sampleRate);
+        }
+
+        const totalSamples = queuedSamples + scheduledSamples;
+        return Math.ceil(totalSamples / 960);
+    }
+
+    // 清空所有音频缓冲
+    clearAllBuffers() {
+        log('清空所有音频缓冲', 'info');
+
+        // 清空所有队列（使用clear方法保持对象引用）
+        this.audioBufferQueue.clear();
+        this.pendingAudioBufferQueue = [];
+        this.activeQueue.clear();
+        this.queue = [];
+
+        // 停止当前播放的音频源
+        if (this.source) {
+            try {
+                this.source.stop();
+                this.source.disconnect();
+            } catch (e) {
+                // 忽略已经停止的错误
+            }
+            this.source = null;
+        }
+
+        // 重置状态
+        this.playing = false;
+        this.scheduledEndTime = this.audioContext.currentTime;
+        this.totalSamples = 0;
+
+        log('音频缓冲已清空', 'success');
     }
 
     // 将Opus数据解码为PCM
@@ -97,7 +151,7 @@ export class StreamingContext {
 
     // 开始播放音频
     async startPlaying() {
-        let scheduledEndTime = this.audioContext.currentTime; // 跟踪已调度音频的结束时间
+        this.scheduledEndTime = this.audioContext.currentTime; // 跟踪已调度音频的结束时间
 
         while (true) {
             // 初始缓冲：等待足够的样本再开始播放
@@ -126,7 +180,7 @@ export class StreamingContext {
 
                 // 精确调度播放时间
                 const currentTime = this.audioContext.currentTime;
-                const startTime = Math.max(scheduledEndTime, currentTime);
+                const startTime = Math.max(this.scheduledEndTime, currentTime);
 
                 // 直接连接到输出
                 this.source.connect(this.audioContext.destination);
@@ -136,7 +190,7 @@ export class StreamingContext {
 
                 // 更新下一个音频块的调度时间
                 const duration = audioBuffer.duration;
-                scheduledEndTime = startTime + duration;
+                this.scheduledEndTime = startTime + duration;
                 this.lastPlayTime = startTime;
 
                 // 如果队列中数据不足，等待新数据

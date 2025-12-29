@@ -101,7 +101,7 @@ async def checkWakeupWords(conn, text):
         }
 
     # 获取音频数据
-    opus_packets = audio_to_data(response.get("file_path"))
+    opus_packets = await audio_to_data(response.get("file_path"), use_cache=False)
     # 播放唤醒词回复
     conn.client_abort = False
 

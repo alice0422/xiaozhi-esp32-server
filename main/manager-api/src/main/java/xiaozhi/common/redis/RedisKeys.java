@@ -159,4 +159,11 @@ public class RedisKeys {
     public static String getKnowledgeBaseCacheKey(String datasetId) {
         return "knowledge:base:" + datasetId;
     }
+
+    /**
+     * 获取临时注册设备标记key
+     */
+    public static String getTmpRegisterMacKey(String deviceId) {
+        return "tmp_register_mac:" + deviceId;
+    }
 }

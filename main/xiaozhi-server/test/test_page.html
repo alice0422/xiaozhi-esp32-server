@@ -91,6 +91,7 @@
                     <input type="text" id="serverUrl" value="" readonly disabled placeholder="点击连接按钮后，自动从OTA接口获取" />
                 </div>
             </div>
+
         </div>
 
         <div class="section">
@@ -113,9 +114,12 @@
                 <canvas id="audioVisualizer" class="audio-visualizer"></canvas>
             </div>
 
-            <div style="margin: -10px 0px 5px 0px;">
+            <div style="margin: -10px 0px 10px 0px;">
                 <span class="connection-status llm-emoji">
-                    <span id="sessionStatus" class="status offline"><span class="emoji-large">😶</span> 小智离线中</span>
+                    <span id="sessionStatus" class="status offline" style="position: relative; display: inline-block;">
+                        <span id="sessionStatusBg" style="position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, rgba(76, 175, 80, 0.2), rgba(33, 150, 243, 0.2)); transition: width 0.15s ease-out, background 0.3s ease; z-index: 0; border-radius: 20px;"></span>
+                        <span style="position: relative; z-index: 1;"><span class="emoji-large">😶</span> 小智离线中</span>
+                    </span>
                 </span>
             </div>
             <div class="flex-container">

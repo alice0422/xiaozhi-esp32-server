@@ -214,10 +214,11 @@
     <el-dialog :title="$t('knowledgeFileUpload.retrievalTest')" :visible.sync="retrievalTestDialogVisible"
       width="1200px" class="retrieval-test-dialog">
       <div class="retrieval-test-form">
-        <el-form :model="retrievalTestForm" label-width="80px">
+        <el-form :model="retrievalTestForm" label-width="80px" @submit.native.prevent="runRetrievalTest">
           <el-form-item :label="$t('knowledgeFileUpload.testQuestion')" required>
             <el-input v-model="retrievalTestForm.question"
-              :placeholder="$t('knowledgeFileUpload.testQuestionPlaceholder')" style="width: 100%; max-height: 80px;">
+              :placeholder="$t('knowledgeFileUpload.testQuestionPlaceholder')" style="width: 100%; max-height: 80px;"
+              @keyup.enter.native="runRetrievalTest">
             </el-input>
           </el-form-item>
         </el-form>

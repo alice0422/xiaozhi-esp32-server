@@ -502,4 +502,22 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
     public List<Map<String, Object>> getTtsPlatformList() {
         return modelConfigDao.getTtsPlatformList();
     }
+
+    /**
+     * 根据模型类型获取所有启用的模型配置
+     */
+    @Override
+    public List<ModelConfigEntity> getEnabledModelsByType(String modelType) {
+        if (StringUtils.isBlank(modelType)) {
+            return null;
+        }
+
+        List<ModelConfigEntity> entities = modelConfigDao.selectList(
+                new QueryWrapper<ModelConfigEntity>()
+                        .eq("model_type", modelType)
+                        .eq("is_enabled", 1)
+                        .orderByAsc("sort"));
+
+        return entities;
+    }
 }

@@ -174,7 +174,7 @@ public class SysParamsController {
             return;
         }
         if (StringUtils.isBlank(url) || url.equals("null")) {
-            throw new RenException(ErrorCode.OTA_URL_EMPTY);
+            return;
         }
 
         // 检查是否包含localhost或127.0.0.1
@@ -211,7 +211,7 @@ public class SysParamsController {
             return;
         }
         if (StringUtils.isBlank(url) || url.equals("null")) {
-            throw new RenException(ErrorCode.MCP_URL_EMPTY);
+            return;
         }
         if (url.contains("localhost") || url.contains("127.0.0.1")) {
             throw new RenException(ErrorCode.MCP_URL_LOCALHOST);
@@ -242,7 +242,7 @@ public class SysParamsController {
             return;
         }
         if (StringUtils.isBlank(url) || url.equals("null")) {
-            throw new RenException(ErrorCode.VOICEPRINT_URL_EMPTY);
+            return;
         }
         if (url.contains("localhost") || url.contains("127.0.0.1")) {
             throw new RenException(ErrorCode.VOICEPRINT_URL_LOCALHOST);

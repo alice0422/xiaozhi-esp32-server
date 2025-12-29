@@ -76,7 +76,8 @@ const routes = [
       return import('../views/ModelConfig.vue')
     }
   },
-  { path: '/params-management',
+  {
+    path: '/params-management',
     name: 'ParamsManagement',
     component: function () {
       return import('../views/ParamsManagement.vue')
@@ -86,7 +87,8 @@ const routes = [
       title: '参数管理'
     }
   },
-  { path: '/knowledge-base-management',
+  {
+    path: '/knowledge-base-management',
     name: 'KnowledgeBaseManagement',
     component: function () {
       return import('../views/KnowledgeBaseManagement.vue')
@@ -96,7 +98,8 @@ const routes = [
       title: '知识库管理'
     }
   },
-  { path: '/knowledge-file-upload',
+  {
+    path: '/knowledge-file-upload',
     name: 'KnowledgeFileUpload',
     component: function () {
       return import('../views/KnowledgeFileUpload.vue')
@@ -179,6 +182,18 @@ const routes = [
     name: 'TemplateQuickConfig',
     component: function () {
       return import('../views/TemplateQuickConfig.vue')
+    }
+  },
+  // 功能配置页面路由
+  {
+    path: '/feature-management',
+    name: 'FeatureManagement',
+    component: function () {
+      return import('../views/FeatureManagement.vue')
+    },
+    meta: {
+      requiresAuth: true,
+      title: '功能配置'
     }
   },
 ]

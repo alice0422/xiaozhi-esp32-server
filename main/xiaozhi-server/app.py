@@ -9,6 +9,7 @@ from core.utils.util import get_local_ip, validate_mcp_endpoint
 from core.http_server import SimpleHttpServer
 from core.websocket_server import WebSocketServer
 from core.utils.util import check_ffmpeg_installed
+from core.utils.gc_manager import get_gc_manager
 
 TAG = __name__
 logger = setup_logging()
@@ -62,6 +63,10 @@ async def main():
 
     # 添加 stdin 监控任务
     stdin_task = asyncio.create_task(monitor_stdin())
+
+    # 启动全局GC管理器（5分钟清理一次）
+    gc_manager = get_gc_manager(interval_seconds=300)
+    await gc_manager.start()
 
     # 启动 WebSocket 服务器
     ws_server = WebSocketServer(config)
@@ -122,6 +127,9 @@ async def main():
     except asyncio.CancelledError:
         print("任务被取消，清理资源中...")
     finally:
+        # 停止全局GC管理器
+        await gc_manager.stop()
+
         # 取消所有任务（关键修复点）
         stdin_task.cancel()
         ws_task.cancel()

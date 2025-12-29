@@ -267,6 +267,7 @@ span.connection-status.llm-emoji {
 .llm-emoji .status {
     font-size: 14px !important;
     padding: 8px 20px !important;
+    line-height: 1.2 !important;
 }
 
 .emoji-large {
@@ -393,7 +394,7 @@ span.connection-status.llm-emoji {
 /* ==================== 会话记录和日志 ==================== */
 .flex-container {
     display: flex;
-    margin-top: 10px;
+    margin-top: 20px;
     background-color: #f9fafb;
 }
 

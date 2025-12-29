@@ -69,6 +69,9 @@ enable_greeting: true
 enable_stop_tts_notify: false
 # 说完话是否开启提示音，音效地址
 stop_tts_notify_voice: "config/assets/tts_notify.mp3"
+# 是否启用WebSocket心跳保活机制
+enable_websocket_ping: false
+
 
 # TTS音频发送延迟配置
 # tts_audio_send_delay: 控制音频包发送间隔
@@ -113,6 +116,15 @@ wakeup_words:
 # MCP接入点地址，地址格式为：ws://你的mcp接入点ip或者域名:端口号/mcp/?token=你的token
 # 详细教程 https://github.com/xinnan-tech/xiaozhi-esp32-server/blob/main/docs/mcp-endpoint-integration.md
 mcp_endpoint: 你的接入点 websocket地址
+
+# 上下文源配置
+# 用于在系统提示词中注入动态数据，如健康数据、股票信息等
+# 可以添加多个上下文源
+context_providers:
+  - url: ""
+    headers:
+      Authorization: ""
+
 # 插件的基础配置
 plugins:
   # 获取天气插件的配置，这里填写你的api_key
@@ -334,6 +346,8 @@ ASR:
     # 热词、替换词使用流程：https://www.volcengine.com/docs/6561/155738
     boosting_table_name: （选填）你的热词文件名称
     correct_table_name: （选填）你的替换词文件名称
+    # 静音判定时长(ms)，默认200ms
+    end_window_size: 200
     output_dir: tmp/
   TencentASR:
     # token申请地址：https://console.cloud.tencent.com/cam/capi
@@ -462,7 +476,6 @@ ASR:
     domain: slm # 识别领域，iat:日常用语，medical:医疗，finance:金融等
     language: zh_cn # 语言，zh_cn:中文，en_us:英文
     accent: mandarin # 方言，mandarin:普通话
-    dwa: wpgs # 动态修正，wpgs:实时返回中间结果
     # 调整音频处理参数以提高长语音识别质量
     output_dir: tmp/
   
@@ -487,7 +500,6 @@ LLM:
     temperature: 0.7  # 温度值
     max_tokens: 500   # 最大生成token数
     top_p: 1
-    top_k: 50
     frequency_penalty: 0  # 频率惩罚
   AliAppLLM:
     # 定义LLM API类型
@@ -670,6 +682,8 @@ TTS:
     access_token: 你的火山引擎语音合成服务access_token
     resource_id: volc.service_type.10029
     speaker: zh_female_wanwanxiaohe_moon_bigtts
+    # 开启WebSocket连接复用，默认复用（注意：复用后设备处于聆听状态时空闲链接会占并发数）
+    enable_ws_reuse: True
     speech_rate: 0
     loudness_rate: 0
     pitch: 0

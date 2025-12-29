@@ -1,8 +1,5 @@
 import os
-import json
-import asyncio
 import tempfile
-import difflib
 from typing import Optional, Tuple, List
 import dashscope
 from config.logger import setup_logging
@@ -16,7 +13,8 @@ logger = setup_logging()
 class ASRProvider(ASRProviderBase):
     def __init__(self, config: dict, delete_audio_file: bool):
         super().__init__()
-        self.interface_type = InterfaceType.STREAM
+        # 音频文件上传类型，流式文本识别输出
+        self.interface_type = InterfaceType.NON_STREAM
         """Qwen3-ASR-Flash ASR初始化"""
         
         # 配置参数
@@ -130,27 +128,11 @@ class ASRProvider(ASRProviderBase):
             
             # 处理流式响应
             full_text = ""
-            last_text = ""  # 用于存储上一个文本片段
             for chunk in response:
                 try:
                     text = chunk["output"]["choices"][0]["message"].content[0]["text"]
-                    # 标准化文本片段（去除首尾空格）
-                    normalized_text = text.strip()
-                    # 只有当新文本片段与上一个不同时才处理
-                    if normalized_text != last_text:
-                        # 提取新增的文本部分
-                        # 通过比较当前文本和上一个文本，找到新增的部分
-                        if normalized_text.startswith(last_text):
-                            # 如果当前文本以最后一个文本开头，则新增部分是两者的差集
-                            new_part = normalized_text[len(last_text):]
-                        else:
-                            # 如果不以最后一个文本开头，说明识别结果发生了较大变化，直接使用当前文本
-                            new_part = normalized_text
-                        
-                        # 将新增部分添加到完整文本中
-                        full_text += new_part
-                        last_text = normalized_text
-                    # 这里可以实时处理文本片段，例如通过回调函数
+                    # 更新为最新的完整文本
+                    full_text = text.strip()
                 except:
                     pass
             

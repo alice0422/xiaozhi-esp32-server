@@ -100,3 +100,14 @@ docker build -t xiaozhi-esp32-server:server-base -f ./Dockerfile-server-base-opt
 
 
 
+
+
+
+
+
+
+
+
+
+
+

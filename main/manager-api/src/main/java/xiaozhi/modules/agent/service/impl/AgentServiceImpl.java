@@ -32,10 +32,12 @@ import xiaozhi.modules.agent.dao.AgentDao;
 import xiaozhi.modules.agent.dto.AgentCreateDTO;
 import xiaozhi.modules.agent.dto.AgentDTO;
 import xiaozhi.modules.agent.dto.AgentUpdateDTO;
+import xiaozhi.modules.agent.entity.AgentContextProviderEntity;
 import xiaozhi.modules.agent.entity.AgentEntity;
 import xiaozhi.modules.agent.entity.AgentPluginMapping;
 import xiaozhi.modules.agent.entity.AgentTemplateEntity;
 import xiaozhi.modules.agent.service.AgentChatHistoryService;
+import xiaozhi.modules.agent.service.AgentContextProviderService;
 import xiaozhi.modules.agent.service.AgentPluginMappingService;
 import xiaozhi.modules.agent.service.AgentService;
 import xiaozhi.modules.agent.service.AgentTemplateService;
@@ -62,6 +64,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
     private final AgentChatHistoryService agentChatHistoryService;
     private final AgentTemplateService agentTemplateService;
     private final ModelProviderService modelProviderService;
+    private final AgentContextProviderService agentContextProviderService;
 
     @Override
     public PageData<AgentEntity> adminAgentList(Map<String, Object> params) {
@@ -85,6 +88,13 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
                 agent.setChatHistoryConf(Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode());
             }
         }
+        
+        // 查询上下文源配置
+        AgentContextProviderEntity contextProviderEntity = agentContextProviderService.getByAgentId(id);
+        if (contextProviderEntity != null) {
+            agent.setContextProviders(contextProviderEntity.getContextProviders());
+        }
+        
         // 无需额外查询插件列表，已通过SQL查询出来
         return agent;
     }
@@ -331,6 +341,14 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             agentChatHistoryService.deleteByAgentId(existingEntity.getId(), true, false);
         }
 
+        // 更新上下文源配置
+        if (dto.getContextProviders() != null) {
+            AgentContextProviderEntity contextEntity = new AgentContextProviderEntity();
+            contextEntity.setAgentId(agentId);
+            contextEntity.setContextProviders(dto.getContextProviders());
+            agentContextProviderService.saveOrUpdateByAgentId(contextEntity);
+        }
+
         boolean b = validateLLMIntentParams(dto.getLlmModelId(), dto.getIntentModelId());
         if (!b) {
             throw new RenException(ErrorCode.LLM_INTENT_PARAMS_MISMATCH);
@@ -395,7 +413,20 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             entity.setIntentModelId(template.getIntentModelId());
             entity.setSystemPrompt(template.getSystemPrompt());
             entity.setSummaryMemory(template.getSummaryMemory());
-            entity.setChatHistoryConf(template.getChatHistoryConf());
+
+            // 根据记忆模型类型设置默认的chatHistoryConf值
+            if (template.getMemModelId() != null) {
+                if (template.getMemModelId().equals("Memory_nomem")) {
+                    // 无记忆功能的模型，默认不记录聊天记录
+                    entity.setChatHistoryConf(0);
+                } else {
+                    // 有记忆功能的模型，默认记录文本和语音
+                    entity.setChatHistoryConf(2);
+                }
+            } else {
+                entity.setChatHistoryConf(template.getChatHistoryConf());
+            }
+
             entity.setLangCode(template.getLangCode());
             entity.setLanguage(template.getLanguage());
         }

@@ -123,7 +123,12 @@ export class WebSocketHandler {
         } else if (message.state === 'sentence_end') {
             log(`语音段结束: ${message.text}`, 'info');
         } else if (message.state === 'stop') {
-            log('服务器语音传输结束', 'info');
+            log('服务器语音传输结束，清空所有音频缓冲', 'info');
+
+            // 清空所有音频缓冲并停止播放
+            const audioPlayer = getAudioPlayer();
+            audioPlayer.clearAllAudio();
+
             this.isRemoteSpeaking = false;
             if (this.onRecordButtonStateChange) {
                 this.onRecordButtonStateChange(false);

@@ -106,7 +106,7 @@
     </div>
 
     <!-- MCP区域 -->
-    <div class="mcp-access-point">
+    <div class="mcp-access-point" v-if="featureStatus.mcpAccessPoint">
       <div class="mcp-container">
         <!-- 左侧区域 -->
         <div class="mcp-left">
@@ -171,6 +171,7 @@
 <script>
 import Api from '@/apis/api';
 import i18n from '@/i18n';
+import featureManager from '@/utils/featureManager';
 
 export default {
   i18n,
@@ -205,6 +206,11 @@ export default {
       mcpUrl: "",
       mcpStatus: "disconnected",
       mcpTools: [],
+      
+      // 功能状态
+      featureStatus: {
+        mcpAccessPoint: false
+      }
     }
   },
   computed: {
@@ -249,6 +255,9 @@ export default {
         // 右侧默认指向第一个
         this.currentFunction = this.selectedList[0] || null;
 
+        // 加载功能状态
+        this.loadFeatureStatus();
+        
         // 加载MCP数据
         this.loadMcpAddress();
         this.loadMcpTools();
@@ -259,6 +268,19 @@ export default {
     }
   },
   methods: {
+    /**
+     * 加载功能状态
+     */
+    async loadFeatureStatus() {
+      // 确保featureManager已初始化完成
+      await featureManager.waitForInitialization();
+      
+      const config = featureManager.getConfig();
+      this.featureStatus = {
+        mcpAccessPoint: config.mcpAccessPoint || false
+      };
+    },
+    
     copyUrl() {
       const textarea = document.createElement('textarea');
       textarea.value = this.mcpUrl;
@@ -456,11 +478,18 @@ export default {
 .function-column {
   position: relative;
   width: auto;
+  height:700px; 
   padding: 10px;
   overflow-y: auto;
   border-right: 1px solid #EBEEF5;
   scrollbar-width: none;
   overflow-x: hidden;
+}
+
+.mcp-access-point {
+  position: relative;
+  z-index: 1;
+  background: white;
 }
 
 .function-column::-webkit-scrollbar {

@@ -249,6 +249,41 @@ export class AudioPlayer {
         this.playBufferedAudio();
         this.startAudioBuffering();
     }
+
+    // 获取音频包统计信息
+    getAudioStats() {
+        if (!this.streamingContext) {
+            return {
+                pendingDecode: 0,
+                pendingPlay: 0,
+                totalPending: 0
+            };
+        }
+
+        const pendingDecode = this.streamingContext.getPendingDecodeCount();
+        const pendingPlay = this.streamingContext.getPendingPlayCount();
+
+        return {
+            pendingDecode,  // 待解码包数
+            pendingPlay,    // 待播放包数
+            totalPending: pendingDecode + pendingPlay  // 总待处理包数
+        };
+    }
+
+    // 清空所有音频缓冲并停止播放
+    clearAllAudio() {
+        log('AudioPlayer: 清空所有音频', 'info');
+
+        // 清空接收队列（使用clear方法保持对象引用）
+        this.queue.clear();
+
+        // 清空流上下文的所有缓冲
+        if (this.streamingContext) {
+            this.streamingContext.clearAllBuffers();
+        }
+
+        log('AudioPlayer: 音频已清空', 'success');
+    }
 }
 
 // 创建单例

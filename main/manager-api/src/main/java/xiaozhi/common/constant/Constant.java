@@ -142,6 +142,11 @@ public interface Constant {
     String SERVER_MQTT_SECRET = "server.mqtt_signature_key";
 
     /**
+     * WebSocket认证开关
+     */
+    String SERVER_AUTH_ENABLED = "server.auth.enabled";
+
+    /**
      * 无记忆
      */
     String MEMORY_NO_MEM = "Memory_nomem";
@@ -299,7 +304,7 @@ public interface Constant {
     /**
      * 版本号
      */
-    public static final String VERSION = "0.8.8";
+    public static final String VERSION = "0.8.10";
 
     /**
      * 无效固件URL

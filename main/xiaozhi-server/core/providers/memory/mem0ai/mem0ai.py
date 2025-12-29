@@ -28,7 +28,7 @@ class MemoryProvider(MemoryProviderBase):
             logger.bind(tag=TAG).error(f"详细错误: {traceback.format_exc()}")
             self.use_mem0 = False
 
-    async def save_memory(self, msgs):
+    async def save_memory(self, msgs, session_id=None):
         if not self.use_mem0:
             return None
         if len(msgs) < 2:
@@ -41,9 +41,7 @@ class MemoryProvider(MemoryProviderBase):
                 for message in msgs
                 if message.role != "system"
             ]
-            result = self.client.add(
-                messages, user_id=self.role_id
-            )
+            result = self.client.add(messages, user_id=self.role_id)
             logger.bind(tag=TAG).debug(f"Save memory result: {result}")
         except Exception as e:
             logger.bind(tag=TAG).error(f"保存记忆失败: {str(e)}")

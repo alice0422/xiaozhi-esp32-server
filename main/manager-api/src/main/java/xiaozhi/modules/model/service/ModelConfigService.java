@@ -55,4 +55,12 @@ public interface ModelConfigService extends BaseService<ModelConfigEntity> {
      * @return TTS平台列表(id和modelName)
      */
     List<Map<String, Object>> getTtsPlatformList();
+
+    /**
+     * 根据模型类型获取所有启用的模型配置
+     *
+     * @param modelType 模型类型（如：LLM, TTS, ASR等）
+     * @return 启用的模型配置列表
+     */
+    List<ModelConfigEntity> getEnabledModelsByType(String modelType);
 }

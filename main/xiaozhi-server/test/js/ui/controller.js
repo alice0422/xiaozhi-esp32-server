@@ -2,6 +2,7 @@
 import { loadConfig, saveConfig } from '../config/manager.js';
 import { getAudioRecorder } from '../core/audio/recorder.js';
 import { getWebSocketHandler } from '../core/network/websocket.js';
+import { getAudioPlayer } from '../core/audio/player.js';
 
 // UI控制器类
 export class UIController {
@@ -9,6 +10,7 @@ export class UIController {
         this.isEditing = false;
         this.visualizerCanvas = null;
         this.visualizerContext = null;
+        this.audioStatsTimer = null;
     }
 
     // 初始化
@@ -18,6 +20,7 @@ export class UIController {
 
         this.initVisualizer();
         this.initEventListeners();
+        this.startAudioStatsMonitor();
         loadConfig();
     }
 
@@ -86,17 +89,20 @@ export class UIController {
         const sessionStatus = document.getElementById('sessionStatus');
         if (!sessionStatus) return;
 
+        // 保留背景元素
+        const bgHtml = '<span id="sessionStatusBg" style="position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, rgba(76, 175, 80, 0.2), rgba(33, 150, 243, 0.2)); transition: width 0.15s ease-out, background 0.3s ease; z-index: 0; border-radius: 20px;"></span>';
+
         if (isSpeaking === null) {
             // 离线状态
-            sessionStatus.innerHTML = '<span class="emoji-large">😶</span> 小智离线中';
+            sessionStatus.innerHTML = bgHtml + '<span style="position: relative; z-index: 1;"><span class="emoji-large">😶</span> 小智离线中</span>';
             sessionStatus.className = 'status offline';
         } else if (isSpeaking) {
             // 说话中
-            sessionStatus.innerHTML = '<span class="emoji-large">😶</span> 小智说话中';
+            sessionStatus.innerHTML = bgHtml + '<span style="position: relative; z-index: 1;"><span class="emoji-large">😶</span> 小智说话中</span>';
             sessionStatus.className = 'status speaking';
         } else {
             // 聆听中
-            sessionStatus.innerHTML = '<span class="emoji-large">😶</span> 小智聆听中';
+            sessionStatus.innerHTML = bgHtml + '<span style="position: relative; z-index: 1;"><span class="emoji-large">😶</span> 小智聆听中</span>';
             sessionStatus.className = 'status listening';
         }
     }
@@ -110,8 +116,72 @@ export class UIController {
         let currentText = sessionStatus.textContent;
         // 移除现有的表情符号
         currentText = currentText.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
+
+        // 保留背景元素
+        const bgHtml = '<span id="sessionStatusBg" style="position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, rgba(76, 175, 80, 0.2), rgba(33, 150, 243, 0.2)); transition: width 0.15s ease-out, background 0.3s ease; z-index: 0; border-radius: 20px;"></span>';
+
         // 使用 innerHTML 添加带样式的表情
-        sessionStatus.innerHTML = `<span class="emoji-large">${emoji}</span> ${currentText}`;
+        sessionStatus.innerHTML = bgHtml + `<span style="position: relative; z-index: 1;"><span class="emoji-large">${emoji}</span> ${currentText}</span>`;
+    }
+
+    // 更新音频统计信息
+    updateAudioStats() {
+        const audioPlayer = getAudioPlayer();
+        const stats = audioPlayer.getAudioStats();
+
+        const sessionStatus = document.getElementById('sessionStatus');
+        const sessionStatusBg = document.getElementById('sessionStatusBg');
+
+        // 只在说话状态下显示背景进度
+        if (sessionStatus && sessionStatus.classList.contains('speaking') && sessionStatusBg) {
+            if (stats.pendingPlay > 0) {
+                // 计算进度：5包=50%，10包及以上=100%
+                let percentage;
+                if (stats.pendingPlay >= 10) {
+                    percentage = 100;
+                } else {
+                    percentage = (stats.pendingPlay / 10) * 100;
+                }
+
+                sessionStatusBg.style.width = `${percentage}%`;
+
+                // 根据缓冲量改变背景颜色
+                if (stats.pendingPlay < 5) {
+                    // 缓冲不足：橙红色半透明
+                    sessionStatusBg.style.background = 'linear-gradient(90deg, rgba(255, 152, 0, 0.25), rgba(255, 87, 34, 0.25))';
+                } else if (stats.pendingPlay < 10) {
+                    // 一般：黄绿色半透明
+                    sessionStatusBg.style.background = 'linear-gradient(90deg, rgba(205, 220, 57, 0.25), rgba(76, 175, 80, 0.25))';
+                } else {
+                    // 充足：绿蓝色半透明
+                    sessionStatusBg.style.background = 'linear-gradient(90deg, rgba(76, 175, 80, 0.25), rgba(33, 150, 243, 0.25))';
+                }
+            } else {
+                // 没有缓冲，隐藏背景
+                sessionStatusBg.style.width = '0%';
+            }
+        } else {
+            // 非说话状态，隐藏背景
+            if (sessionStatusBg) {
+                sessionStatusBg.style.width = '0%';
+            }
+        }
+    }
+
+    // 启动音频统计监控
+    startAudioStatsMonitor() {
+        // 每100ms更新一次音频统计
+        this.audioStatsTimer = setInterval(() => {
+            this.updateAudioStats();
+        }, 100);
+    }
+
+    // 停止音频统计监控
+    stopAudioStatsMonitor() {
+        if (this.audioStatsTimer) {
+            clearInterval(this.audioStatsTimer);
+            this.audioStatsTimer = null;
+        }
     }
 
     // 绘制音频可视化效果
