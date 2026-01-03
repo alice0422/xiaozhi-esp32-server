@@ -735,16 +735,40 @@ class ASRProvider(ASRProviderBase):
                     last_audio = asr_audio_task[-1]
                     last_frame = self.decoder.decode(last_audio, 960)
                 await self._send_audio_frame(last_frame, STATUS_LAST_FRAME)
+                
                 # 等待最终识别结果，避免把中间结果提前送入LLM
-                # 超时时间可配置，默认2秒
-                wait_timeout = float(self.config.get("final_wait_timeout", 2.0))
+                # 超时时间可配置，默认3秒（增加默认值以确保完整识别）
+                # 使用 or 确保空值、None、0 都会使用默认值
+                raw_timeout = self.config.get("final_wait_timeout")
+                wait_timeout = float(raw_timeout) if raw_timeout else 3.0
+                logger.bind(tag=TAG).info(f"等待最终识别结果，超时时间: {wait_timeout}s (配置值: {raw_timeout})")
+                
                 try:
-                    await asyncio.to_thread(self._final_event.wait, wait_timeout)
-                except Exception:
-                    pass
-                # 如果已拿到最终结果，确保self.text是最终文本
+                    # 使用 asyncio 友好的方式等待
+                    waited = 0.0
+                    check_interval = 0.1
+                    while waited < wait_timeout:
+                        if self._final_event.is_set():
+                            logger.bind(tag=TAG).info(f"收到最终结果信号，等待了 {waited:.2f}s")
+                            break
+                        await asyncio.sleep(check_interval)
+                        waited += check_interval
+                    
+                    if not self._final_event.is_set():
+                        logger.bind(tag=TAG).warning(f"等待最终结果超时 ({wait_timeout}s)，使用当前最佳结果")
+                except Exception as e:
+                    logger.bind(tag=TAG).warning(f"等待最终结果时发生异常: {e}")
+                
+                # 确保使用最佳文本作为最终结果
+                # 优先级：has_final_result 的 best_text > 最长的 best_text > 当前 text
                 if self.has_final_result and self.best_text:
                     self.text = self.best_text
+                    logger.bind(tag=TAG).info(f"使用最终识别结果: {self.text}")
+                elif self.best_text and len(self.best_text) > len(self.text):
+                    self.text = self.best_text
+                    logger.bind(tag=TAG).info(f"使用最佳中间结果: {self.text}")
+                else:
+                    logger.bind(tag=TAG).info(f"使用当前结果: {self.text}")
 
             await super().handle_voice_stop(conn, asr_audio_task)
         except Exception as e:
