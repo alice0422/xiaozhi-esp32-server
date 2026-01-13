@@ -787,6 +787,9 @@ class ConnectionHandler:
         self.dialogue.update_system_message(self.prompt)
 
     def chat(self, query, depth=0):
+        # 记录整体开始时间
+        chat_start_time = time.time()
+        
         if query is not None:
             self.logger.bind(tag=TAG).info(f"大模型收到用户消息: {query}")
 
@@ -808,7 +811,7 @@ class ConnectionHandler:
         force_final_answer = False  # 标记是否强制最终回答
 
         if depth >= MAX_DEPTH:
-            self.logger.bind(tag=TAG).debug(
+            self.logger.bind(tag=TAG).info(
                 f"已达到最大工具调用深度 {MAX_DEPTH}，将强制基于现有信息回答"
             )
             force_final_answer = True
@@ -835,11 +838,17 @@ class ConnectionHandler:
             # 使用带记忆的对话
             memory_str = None
             if self.memory is not None:
+                memory_start = time.time()
                 future = asyncio.run_coroutine_threadsafe(
                     self.memory.query_memory(query), self.loop
                 )
                 memory_str = future.result()
+                self.logger.bind(tag=TAG).info(f"[耗时统计] 记忆查询完成: {time.time() - memory_start:.3f}s")
 
+            # 记录LLM调用开始时间
+            llm_start_time = time.time()
+            self.logger.bind(tag=TAG).info(f"[耗时统计] LLM调用开始 (depth={depth})")
+            
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
                 llm_responses = self.llm.response_with_functions(
@@ -867,7 +876,13 @@ class ConnectionHandler:
         content_arguments = ""
         self.client_abort = False
         emotion_flag = True
+        first_token_logged = False  # 标记是否已记录首Token时间
         for response in llm_responses:
+            # 记录首Token时间
+            if not first_token_logged:
+                self.logger.bind(tag=TAG).info(f"[耗时统计] LLM首Token返回: {time.time() - llm_start_time:.3f}s")
+                first_token_logged = True
+            
             if self.client_abort:
                 break
             if self.intent_type == "function_call" and functions is not None:
@@ -908,6 +923,9 @@ class ConnectionHandler:
                         )
                     )
         # 处理function call
+        # 记录LLM响应完成时间
+        self.logger.bind(tag=TAG).info(f"[耗时统计] LLM响应完成: {time.time() - llm_start_time:.3f}s")
+        
         if tool_call_flag:
             bHasError = False
             # 处理基于文本的工具调用格式
@@ -945,16 +963,17 @@ class ConnectionHandler:
                     self.dialogue.put(Message(role="assistant", content=text_buff))
                 response_message.clear()
 
-                self.logger.bind(tag=TAG).debug(
-                    f"检测到 {len(tool_calls_list)} 个工具调用"
+                self.logger.bind(tag=TAG).info(
+                    f"[耗时统计] 检测到 {len(tool_calls_list)} 个工具调用"
                 )
 
                 # 收集所有工具调用的 Future
                 futures_with_data = []
                 for tool_call_data in tool_calls_list:
-                    self.logger.bind(tag=TAG).debug(
-                        f"function_name={tool_call_data['name']}, function_id={tool_call_data['id']}, function_arguments={tool_call_data['arguments']}"
+                    self.logger.bind(tag=TAG).info(
+                        f"[耗时统计] 开始执行工具: {tool_call_data['name']}, 参数: {tool_call_data['arguments']}"
                     )
+                    tool_start_time = time.time()
 
                     future = asyncio.run_coroutine_threadsafe(
                         self.func_handler.handle_llm_function_call(
@@ -962,12 +981,15 @@ class ConnectionHandler:
                         ),
                         self.loop,
                     )
-                    futures_with_data.append((future, tool_call_data))
+                    futures_with_data.append((future, tool_call_data, tool_start_time))
 
                 # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
-                for future, tool_call_data in futures_with_data:
+                for future, tool_call_data, tool_start_time in futures_with_data:
                     result = future.result()
+                    self.logger.bind(tag=TAG).info(
+                        f"[耗时统计] 工具执行完成: {tool_call_data['name']}, 耗时: {time.time() - tool_start_time:.3f}s"
+                    )
                     tool_results.append((result, tool_call_data))
 
                 # 统一处理所有工具调用结果
@@ -988,6 +1010,8 @@ class ConnectionHandler:
                 )
             )
             self.llm_finish_task = True
+            # 记录整体耗时
+            self.logger.bind(tag=TAG).info(f"[耗时统计] chat()整体完成: {time.time() - chat_start_time:.3f}s")
             # 使用lambda延迟计算，只有在DEBUG级别时才执行get_llm_dialogue()
             self.logger.bind(tag=TAG).debug(
                 lambda: json.dumps(
@@ -1007,10 +1031,12 @@ class ConnectionHandler:
                 Action.ERROR,
             ]:  # 直接回复前端
                 text = result.response if result.response else result.result
+                self.logger.bind(tag=TAG).info(f"[耗时统计] 工具直接返回结果: {tool_call_data['name']}, action={result.action}")
                 self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
                 self.dialogue.put(Message(role="assistant", content=text))
             elif result.action == Action.REQLLM:
                 # 收集需要 LLM 处理的工具
+                self.logger.bind(tag=TAG).info(f"[耗时统计] 工具需要LLM处理: {tool_call_data['name']}")
                 need_llm_tools.append((result, tool_call_data))
             else:
                 pass
@@ -1049,6 +1075,7 @@ class ConnectionHandler:
                         )
                     )
 
+            self.logger.bind(tag=TAG).info(f"[耗时统计] 开始第{depth + 2}次LLM调用(整合工具结果)")
             self.chat(None, depth=depth + 1)
 
     def _report_worker(self):
