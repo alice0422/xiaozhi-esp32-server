@@ -1,13 +1,18 @@
-import base64
+import os
 import json
 import uuid
-import wave
-from io import BytesIO
-
-import requests
+import queue
+import base64
+import asyncio
+import traceback
+import websockets
+from asyncio import Task
 
 from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
+from core.providers.tts.dto.dto import SentenceType, ContentType, InterfaceType
+from core.utils import opus_encoder_utils
+from core.utils.tts import MarkdownCleaner
 from core.utils.util import check_model_key
 
 TAG = __name__
@@ -17,33 +22,59 @@ logger = setup_logging()
 class TTSProvider(TTSProviderBase):
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
-        self.api_url = config.get("api_url")
+
+        # 双向流式接口类型
+        self.interface_type = InterfaceType.DUAL_STREAM
+
+        # API 配置
+        self.ws_url = config.get("ws_url") or config.get("api_url")  # 兼容两种字段名
         self.api_key = config.get("api_key")
         self.sample_rate = int(config.get("sample_rate", 24000))
-        self.audio_coding = config.get("audio_coding", "raw")
+        self.audio_coding = config.get("audio_coding") or config.get("encoding", "raw")  # 兼容 encoding 字段
+
+        # 音色和语音参数
+        self.voice = config.get("voice", "")  # 音色ID
+        self.speed = config.get("speed", 1.0)  # 语速，1.0为正常
+        self.volume = config.get("volume", 1.0)  # 音量，1.0为正常
+        self.pitch = config.get("pitch", 1.0)  # 音调，1.0为正常
+
+        # sessionParam 配置（可覆盖上面的参数）
         self.session_param = config.get("session_param", {})
-        self.debug = str(config.get("debug", "false")).lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
+
+        # 调试模式
+        self.debug = str(config.get("debug", "false")).lower() in ("1", "true", "yes", "on")
+
         self.output_file = config.get("output_dir", "tmp/")
         self.audio_file_type = "wav"
 
+        # 文本缓冲（用于按句子分段）
+        self.text_buffer = ""
+        # 句子分隔符
+        self.sentence_punctuations = ("。", "！", "？", "!", "?", "；", ";", "\n")
+        # 首句分隔符（更短的分段，让首句更快播放）
+        self.first_sentence_punctuations = ("，", ",", "。", "！", "？", "!", "?", "；", ";", "：", ":", "~", "\n")
+        self.is_first_sentence = True
+
+        # 句子队列（用于异步合成）
+        self.sentence_queue = None  # 延迟初始化
+        self._synthesize_task = None
+        self._last_sent = False  # 标记是否已发送 LAST
+
+        # Opus 编码器
+        self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
+            sample_rate=self.sample_rate, channels=1, frame_size_ms=60
+        )
+
+        # 验证必需参数
         model_key_msg = check_model_key("TTS", self.api_key)
         if model_key_msg:
             logger.bind(tag=TAG).error(model_key_msg)
 
-    def _build_headers(self):
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
+        if not self.ws_url:
+            logger.bind(tag=TAG).warning("CMHK XTTS ws_url 未配置")
 
     def _normalize_session_param(self, session_param: dict) -> dict:
-        """sessionParam is map<string,string> (proto). Ensure all keys/values are strings."""
+        """sessionParam 是 map<string,string>，确保所有键值都是字符串"""
         if not isinstance(session_param, dict):
             return {}
         normalized = {}
@@ -52,151 +83,480 @@ class TTSProvider(TTSProviderBase):
             if v is None:
                 val = ""
             elif isinstance(v, bool):
-                # JSON boolean would break Go's string unmarshal
                 val = "true" if v else "false"
             else:
                 val = str(v)
             normalized[key] = val
         return normalized
 
-    def _wrap_pcm_to_wav(self, pcm_bytes: bytes) -> bytes:
-        wav_buf = BytesIO()
-        with wave.open(wav_buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(self.sample_rate)
-            wf.writeframes(pcm_bytes)
-        return wav_buf.getvalue()
+    def _build_session_param(self, session_id: str = None) -> dict:
+        """构建 sessionParam"""
+        sp = dict(self.session_param) if isinstance(self.session_param, dict) else {}
+        if session_id:
+            sp["sid"] = session_id
+        elif "sid" not in sp:
+            sp["sid"] = f"xiaozhi-{uuid.uuid4().hex}"
+        if "sample_rate" not in sp:
+            sp["sample_rate"] = str(self.sample_rate)
+        if "audio_coding" not in sp:
+            sp["audio_coding"] = str(self.audio_coding)
+        return self._normalize_session_param(sp)
 
-    def _decode_result_data(self, data):
-        if data is None:
-            return b""
-        if isinstance(data, str):
-            return base64.b64decode(data)
-        if isinstance(data, (list, tuple)):
-            return bytes(data)
-        raise TypeError(f"Unsupported result.data type: {type(data).__name__}")
+    def _extract_sentence(self) -> str:
+        """从缓冲区提取一个完整的句子"""
+        if not self.text_buffer:
+            return None
 
-    def _process_one_response_obj(self, obj, audio_chunks):
-        result = obj.get("result") if isinstance(obj, dict) else None
-        if result is None and isinstance(obj, dict):
-            result = obj
-        if not isinstance(result, dict):
-            return False
+        # 根据是否是第一句选择分隔符
+        punctuations = self.first_sentence_punctuations if self.is_first_sentence else self.sentence_punctuations
 
-        err_code = result.get("errCode")
-        if err_code not in (None, 0, "0"):
-            err_str = result.get("errStr")
-            raise Exception(f"CMHK XTTS error: errCode={err_code}, errStr={err_str}")
+        # 查找最早的分隔符位置
+        earliest_pos = -1
+        for punct in punctuations:
+            pos = self.text_buffer.find(punct)
+            if pos != -1:
+                if earliest_pos == -1 or pos < earliest_pos:
+                    earliest_pos = pos
 
-        audio_part = self._decode_result_data(result.get("data"))
-        if audio_part:
-            audio_chunks.append(audio_part)
+        if earliest_pos != -1:
+            # 提取句子（包含分隔符）
+            sentence = self.text_buffer[:earliest_pos + 1]
+            self.text_buffer = self.text_buffer[earliest_pos + 1:]
+            if self.is_first_sentence:
+                self.is_first_sentence = False
+            return sentence.strip()
 
-        return bool(result.get("endFlag"))
+        return None
 
-    def _parse_streaming_json(self, resp) -> bytes:
+    async def _synthesize_one_sentence(self, sentence: str):
+        """合成一个句子的音频（独立连接）- 边收边播流式"""
+        if not sentence:
+            return
+
+        filtered_text = MarkdownCleaner.clean_markdown(sentence)
+        if not filtered_text.strip():
+            return
+
+        logger.bind(tag=TAG).debug(f"开始合成句子: {filtered_text[:30]}...")
+
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        ws = None
+        first_audio_sent = False  # 标记是否已发送第一段音频
+        
         try:
-            data = resp.json()
-            audio_chunks = []
-            self._process_one_response_obj(data, audio_chunks)
-            return b"".join(audio_chunks)
-        except Exception:
-            pass
-
-        decoder = json.JSONDecoder()
-        buffer = ""
-        audio_chunks = []
-
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            buffer += line
-            while buffer:
-                buffer_l = buffer.lstrip()
-                if not buffer_l:
-                    buffer = ""
-                    break
-                try:
-                    obj, idx = decoder.raw_decode(buffer_l)
-                except json.JSONDecodeError:
-                    break
-
-                end_flag = self._process_one_response_obj(obj, audio_chunks)
-                buffer = buffer_l[idx:]
-                if end_flag:
-                    return b"".join(audio_chunks)
-
-        if buffer.strip():
-            try:
-                obj = json.loads(buffer)
-                self._process_one_response_obj(obj, audio_chunks)
-            except Exception:
-                pass
-
-        return b"".join(audio_chunks)
-
-    async def text_to_speak(self, text, output_file):
-        if not self.api_url:
-            raise ValueError("CMHK XTTS api_url is required")
-
-        session_param = dict(self.session_param) if isinstance(self.session_param, dict) else {}
-        if "sid" not in session_param:
-            session_param["sid"] = f"xiaozhi-{uuid.uuid4().hex}"
-        if "sample_rate" not in session_param:
-            session_param["sample_rate"] = str(self.sample_rate)
-        if "audio_coding" not in session_param:
-            session_param["audio_coding"] = str(self.audio_coding)
-
-        session_param = self._normalize_session_param(session_param)
-
-        if self.debug:
-            logger.bind(tag=TAG).info(f"CMHK XTTS sessionParam: {session_param}")
-
-        def _request_once(sp: dict):
-            payload = {
-                "sessionParam": sp,
-                "text": text,
-                "endFlag": True,
-            }
-            resp = requests.post(
-                self.api_url,
-                json=payload,
-                headers=self._build_headers(),
-                stream=True,
-                timeout=10,
+            ws = await asyncio.wait_for(
+                websockets.connect(
+                    self.ws_url,
+                    additional_headers=headers,
+                    ping_interval=None,
+                    close_timeout=2,
+                ),
+                timeout=5
             )
 
-            if resp.status_code != 200:
-                raise Exception(
-                    f"CMHK XTTS request failed: {resp.status_code} - {resp.text}"
+            session_param = self._build_session_param()
+
+            request = {
+                "sessionParam": session_param,
+                "text": filtered_text,
+                "endFlag": True,
+            }
+            await ws.send(json.dumps(request))
+
+            # 边收边播
+            while True:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                except asyncio.TimeoutError:
+                    logger.bind(tag=TAG).warning("接收音频超时")
+                    break
+
+                data = json.loads(msg)
+
+                result = data.get("result") if isinstance(data, dict) else data
+                if not isinstance(result, dict):
+                    result = data
+
+                err_code = result.get("errCode")
+                if err_code not in (None, 0, "0"):
+                    err_str = result.get("errStr", "未知错误")
+                    logger.bind(tag=TAG).error(f"TTS 合成错误: errCode={err_code}, errStr={err_str}")
+                    break
+
+                audio_data = result.get("data")
+                end_flag = result.get("endFlag", False)
+
+                if audio_data:
+                    try:
+                        if isinstance(audio_data, str):
+                            audio_bytes = base64.b64decode(audio_data)
+                        elif isinstance(audio_data, (list, tuple)):
+                            audio_bytes = bytes(audio_data)
+                        else:
+                            audio_bytes = audio_data
+
+                        # 第一段音频时发送 FIRST 通知
+                        if not first_audio_sent:
+                            first_audio_sent = True
+                            self.tts_audio_queue.put((SentenceType.FIRST, [], filtered_text))
+
+                        # 立即编码并推送（流式）
+                        self.opus_encoder.encode_pcm_to_opus_stream(
+                            audio_bytes, False, self.handle_opus
+                        )
+                    except Exception as e:
+                        logger.bind(tag=TAG).error(f"处理音频数据失败: {e}")
+
+                if end_flag:
+                    logger.bind(tag=TAG).info(f"句子语音生成成功: {filtered_text[:30]}...")
+                    break
+
+        except asyncio.TimeoutError:
+            logger.bind(tag=TAG).error(f"合成句子超时: {filtered_text[:20]}...")
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"合成句子失败: {str(e)}")
+        finally:
+            if ws:
+                try:
+                    await ws.close()
+                except:
+                    pass
+
+    async def _sentence_synthesize_loop(self):
+        """句子合成循环 - 从队列中取句子并合成"""
+        while True:
+            try:
+                if self.sentence_queue is None:
+                    break
+                    
+                item = await self.sentence_queue.get()
+                
+                if item is None:  # 结束信号
+                    break
+                
+                sentence, is_last = item
+                
+                # 检查是否被打断
+                if self.conn and self.conn.client_abort:
+                    logger.bind(tag=TAG).debug(f"句子被打断，跳过: {sentence[:20] if sentence else ''}...")
+                    continue
+                
+                # 合成句子（空句子跳过合成但继续处理 is_last）
+                if sentence:
+                    await self._synthesize_one_sentence(sentence)
+                
+                # 再次检查打断状态，避免打断后还发送 LAST
+                if self.conn and self.conn.client_abort:
+                    continue
+                
+                # is_last 时调用 _process_before_stop_play_files，它内部会发送 LAST
+                if is_last and not self._last_sent:
+                    self._last_sent = True
+                    self._process_before_stop_play_files()
+                    # 注意：_process_before_stop_play_files 内部已经发送了 LAST，不要重复发送
+                    
+            except asyncio.CancelledError:
+                logger.bind(tag=TAG).debug("句子合成循环被取消")
+                break
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"句子合成循环错误: {e}")
+
+    def _stop_synthesize_task(self):
+        """停止合成任务并清理队列"""
+        # 取消正在执行的任务
+        if self._synthesize_task and not self._synthesize_task.done():
+            self._synthesize_task.cancel()
+            self._synthesize_task = None
+        
+        # 清空队列
+        if self.sentence_queue:
+            try:
+                while True:
+                    self.sentence_queue.get_nowait()
+            except:
+                pass
+        self.sentence_queue = None
+
+    def tts_text_priority_thread(self):
+        """双向流式 TTS 文本处理线程 - 按句子分段合成"""
+        while not self.conn.stop_event.is_set():
+            try:
+                message = self.tts_text_queue.get(timeout=1)
+                logger.bind(tag=TAG).debug(
+                    f"收到TTS任务｜{message.sentence_type.name} ｜ {message.content_type.name}"
                 )
-            return self._parse_streaming_json(resp)
+
+                if message.sentence_type == SentenceType.FIRST:
+                    self.conn.client_abort = False
+                    # 停止之前的合成任务
+                    self._stop_synthesize_task()
+                    # 重置状态
+                    self.text_buffer = ""
+                    self.is_first_sentence = True
+                    self._last_sent = False
+                    self.before_stop_play_files.clear()
+                    
+                    # 创建新的队列并启动合成循环
+                    self.sentence_queue = asyncio.Queue()
+                    self._synthesize_task = asyncio.run_coroutine_threadsafe(
+                        self._sentence_synthesize_loop(),
+                        loop=self.conn.loop,
+                    )
+
+                if self.conn.client_abort:
+                    logger.bind(tag=TAG).info("收到打断信息，终止TTS文本处理")
+                    self.text_buffer = ""
+                    self._stop_synthesize_task()
+                    continue
+
+                # 处理文本内容
+                if ContentType.TEXT == message.content_type:
+                    if message.content_detail and self.sentence_queue:
+                        # 添加到缓冲区
+                        self.text_buffer += message.content_detail
+
+                        # 尝试提取并合成完整的句子
+                        while True:
+                            sentence = self._extract_sentence()
+                            if sentence and self.sentence_queue:
+                                # 放入句子队列
+                                asyncio.run_coroutine_threadsafe(
+                                    self.sentence_queue.put((sentence, False)),
+                                    loop=self.conn.loop,
+                                )
+                            else:
+                                break
+
+                # 处理文件内容
+                elif ContentType.FILE == message.content_type:
+                    # 先处理缓冲区中剩余的文本
+                    if self.text_buffer.strip() and self.sentence_queue:
+                        asyncio.run_coroutine_threadsafe(
+                            self.sentence_queue.put((self.text_buffer.strip(), False)),
+                            loop=self.conn.loop,
+                        )
+                        self.text_buffer = ""
+
+                    if message.content_file and os.path.exists(message.content_file):
+                        self._process_audio_file_stream(
+                            message.content_file,
+                            callback=lambda audio_data: self.handle_audio_file(audio_data, message.content_detail)
+                        )
+
+                # 会话结束
+                if message.sentence_type == SentenceType.LAST:
+                    # 处理缓冲区中剩余的文本
+                    remaining = self.text_buffer.strip()
+                    self.text_buffer = ""
+                    
+                    if remaining and self.sentence_queue:
+                        # 最后一个句子，标记为 is_last=True，由合成循环发送 LAST
+                        asyncio.run_coroutine_threadsafe(
+                            self.sentence_queue.put((remaining, True)),
+                            loop=self.conn.loop,
+                        )
+                    elif self.sentence_queue:
+                        # 没有剩余文本，但队列里可能还有句子在处理
+                        # 发送一个空的 is_last=True 让合成循环发送 LAST
+                        asyncio.run_coroutine_threadsafe(
+                            self.sentence_queue.put(("", True)),
+                            loop=self.conn.loop,
+                        )
+                    elif not self._last_sent:
+                        # 队列都没了，直接发送结束信号
+                        self._last_sent = True
+                        self._process_before_stop_play_files()
+                        self.tts_audio_queue.put((SentenceType.LAST, [], None))
+                    
+                    self.is_first_sentence = True
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.bind(tag=TAG).error(
+                    f"处理TTS文本失败: {str(e)}, 堆栈: {traceback.format_exc()}"
+                )
+
+    async def text_to_speak(self, text, output_file):
+        """单次 TTS 合成（用于非流式场景）"""
+        if not self.ws_url:
+            raise ValueError("CMHK XTTS ws_url 未配置")
+
+        filtered_text = MarkdownCleaner.clean_markdown(text)
+        if not filtered_text.strip():
+            return None
+
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        audio_chunks = []
+        ws = None
 
         try:
-            audio_bytes = _request_once(session_param)
-        except Exception as e:
-            msg = str(e)
-            if "errCode=32002" in msg and "bridgeISEMSetParam" in msg:
-                sp2 = dict(session_param)
-                if "emotion" in sp2 or "emotion_scale" in sp2:
-                    sp2.pop("emotion", None)
-                    sp2.pop("emotion_scale", None)
-                    audio_bytes = _request_once(sp2)
-                else:
-                    raise
-            else:
-                raise
-        if not audio_bytes:
-            raise Exception("CMHK XTTS empty audio data")
+            ws = await asyncio.wait_for(
+                websockets.connect(
+                    self.ws_url,
+                    additional_headers=headers,
+                    ping_interval=None,
+                    close_timeout=2,
+                ),
+                timeout=5
+            )
 
-        if audio_bytes[:4] == b"RIFF":
-            wav_bytes = audio_bytes
+            session_param = self._build_session_param()
+
+            request = {
+                "sessionParam": session_param,
+                "text": filtered_text,
+                "endFlag": True,
+            }
+            await ws.send(json.dumps(request))
+
+            while True:
+                msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                data = json.loads(msg)
+
+                result = data.get("result") if isinstance(data, dict) else data
+                if not isinstance(result, dict):
+                    result = data
+
+                err_code = result.get("errCode")
+                if err_code not in (None, 0, "0"):
+                    err_str = result.get("errStr", "未知错误")
+                    raise Exception(f"TTS 合成失败: errCode={err_code}, errStr={err_str}")
+
+                audio_data = result.get("data")
+                end_flag = result.get("endFlag", False)
+
+                if audio_data:
+                    if isinstance(audio_data, str):
+                        audio_bytes = base64.b64decode(audio_data)
+                    elif isinstance(audio_data, (list, tuple)):
+                        audio_bytes = bytes(audio_data)
+                    else:
+                        audio_bytes = audio_data
+                    audio_chunks.append(audio_bytes)
+
+                if end_flag:
+                    break
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"TTS 请求失败: {str(e)}")
+            raise
+        finally:
+            if ws:
+                try:
+                    await ws.close()
+                except:
+                    pass
+
+        if not audio_chunks:
+            raise Exception("TTS 返回空音频数据")
+
+        pcm_bytes = b"".join(audio_chunks)
+
+        # 封装为 WAV
+        if pcm_bytes[:4] == b"RIFF":
+            wav_bytes = pcm_bytes
         else:
-            wav_bytes = self._wrap_pcm_to_wav(audio_bytes)
+            import wave
+            from io import BytesIO
+            wav_buf = BytesIO()
+            with wave.open(wav_buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(self.sample_rate)
+                wf.writeframes(pcm_bytes)
+            wav_bytes = wav_buf.getvalue()
 
         if output_file:
             with open(output_file, "wb") as f:
                 f.write(wav_bytes)
+            return None
         else:
             return wav_bytes
+
+    def to_tts(self, text: str) -> list:
+        """非流式 TTS 处理，返回 Opus 编码的音频数据列表"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            audio_data = []
+
+            async def _generate():
+                headers = {}
+                if self.api_key:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
+
+                ws = await asyncio.wait_for(
+                    websockets.connect(
+                        self.ws_url,
+                        additional_headers=headers,
+                        ping_interval=None,
+                        close_timeout=2,
+                    ),
+                    timeout=5
+                )
+
+                try:
+                    filtered_text = MarkdownCleaner.clean_markdown(text)
+                    session_param = self._build_session_param()
+
+                    request = {
+                        "sessionParam": session_param,
+                        "text": filtered_text,
+                        "endFlag": True,
+                    }
+                    await ws.send(json.dumps(request))
+
+                    while True:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                        data = json.loads(msg)
+
+                        result = data.get("result") if isinstance(data, dict) else data
+                        if not isinstance(result, dict):
+                            result = data
+
+                        err_code = result.get("errCode")
+                        if err_code not in (None, 0, "0"):
+                            err_str = result.get("errStr", "未知错误")
+                            raise Exception(f"TTS 合成失败: errCode={err_code}, errStr={err_str}")
+
+                        audio_part = result.get("data")
+                        end_flag = result.get("endFlag", False)
+
+                        if audio_part:
+                            if isinstance(audio_part, str):
+                                audio_bytes = base64.b64decode(audio_part)
+                            elif isinstance(audio_part, (list, tuple)):
+                                audio_bytes = bytes(audio_part)
+                            else:
+                                audio_bytes = audio_part
+
+                            self.opus_encoder.encode_pcm_to_opus_stream(
+                                audio_bytes,
+                                end_of_stream=False,
+                                callback=lambda opus: audio_data.append(opus)
+                            )
+
+                        if end_flag:
+                            break
+                finally:
+                    try:
+                        await ws.close()
+                    except:
+                        pass
+
+            loop.run_until_complete(_generate())
+            loop.close()
+
+            return audio_data
+
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"生成音频数据失败: {str(e)}")
+            return []
