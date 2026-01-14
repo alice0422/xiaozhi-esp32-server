@@ -39,6 +39,10 @@ async def start_lyrics_sync(conn, music_path: str):
     duration = _get_music_duration(conn, music_path)  # 传入音频文件路径
     
     while time.time() - _start_time < duration and _is_running:
+        # 检查是否被打断
+        if getattr(conn, "client_abort", False):
+            conn.logger.bind(tag=TAG).info("检测到打断，停止歌词同步")
+            break
         current_pos = time.time() - _start_time
         await _send_lyric(conn, current_pos)
         await asyncio.sleep(0.1) # 延时，默认0.1
