@@ -51,8 +51,8 @@ class TTSProvider(TTSProviderBase):
         self.text_buffer = ""
         # 句子分隔符
         self.sentence_punctuations = ("。", "！", "？", "!", "?", "；", ";", "\n")
-        # 首句分隔符（更短的分段，让首句更快播放）
-        self.first_sentence_punctuations = ("，", ",", "。", "！", "？", "!", "?", "；", ";", "：", ":", "~", "\n")
+        # 首句分隔符（更短的分段，让首句更快播放）- 不包含冒号，避免时间被拆分
+        self.first_sentence_punctuations = ("，", ",", "。", "！", "？", "!", "?", "；", ";", "~", "\n")
         self.is_first_sentence = True
 
         # 句子队列（用于异步合成）
