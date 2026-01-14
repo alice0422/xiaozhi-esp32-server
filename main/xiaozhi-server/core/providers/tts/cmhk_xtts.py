@@ -152,9 +152,9 @@ class TTSProvider(TTSProviderBase):
                     self.ws_url,
                     additional_headers=headers,
                     ping_interval=None,
-                    close_timeout=2,
+                    close_timeout=5,
                 ),
-                timeout=5
+                timeout=10  # 连接超时增加到 10 秒
             )
 
             session_param = self._build_session_param()
@@ -169,7 +169,7 @@ class TTSProvider(TTSProviderBase):
             # 边收边播
             while True:
                 try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                    msg = await asyncio.wait_for(ws.recv(), timeout=30)  # 接收超时增加到 30 秒
                 except asyncio.TimeoutError:
                     logger.bind(tag=TAG).warning("接收音频超时")
                     break
@@ -267,8 +267,12 @@ class TTSProvider(TTSProviderBase):
     def _stop_synthesize_task(self):
         """停止合成任务并清理队列"""
         # 取消正在执行的任务
-        if self._synthesize_task and not self._synthesize_task.done():
-            self._synthesize_task.cancel()
+        if self._synthesize_task:
+            try:
+                if hasattr(self._synthesize_task, 'cancel'):
+                    self._synthesize_task.cancel()
+            except:
+                pass
             self._synthesize_task = None
         
         # 清空队列
@@ -279,6 +283,11 @@ class TTSProvider(TTSProviderBase):
             except:
                 pass
         self.sentence_queue = None
+
+    async def close(self):
+        """资源清理方法 - 连接关闭时调用"""
+        self._stop_synthesize_task()
+        logger.bind(tag=TAG).debug("TTS 资源已清理")
 
     def tts_text_priority_thread(self):
         """双向流式 TTS 文本处理线程 - 按句子分段合成"""
