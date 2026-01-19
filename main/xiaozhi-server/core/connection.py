@@ -877,11 +877,17 @@ class ConnectionHandler:
         self.client_abort = False
         emotion_flag = True
         first_token_logged = False  # 标记是否已记录首Token时间
+        token_count = 0  # 调试：统计收到的 token 数量
         for response in llm_responses:
+            token_count += 1
             # 记录首Token时间
             if not first_token_logged:
                 self.logger.bind(tag=TAG).info(f"[耗时统计] LLM首Token返回: {time.time() - llm_start_time:.3f}s")
                 first_token_logged = True
+            
+            # 调试：每 50 个 token 打印一次
+            if token_count % 50 == 0:
+                self.logger.bind(tag=TAG).debug(f"[LLM流式] 已收到 {token_count} 个token, tool_call_flag={tool_call_flag}")
             
             if self.client_abort:
                 break
@@ -922,9 +928,12 @@ class ConnectionHandler:
                             content_detail=content,
                         )
                     )
+                else:
+                    # 调试：工具调用时也记录一下
+                    self.logger.bind(tag=TAG).debug(f"[工具调用中] 收到内容但未传给TTS: {content[:50]}...")
         # 处理function call
         # 记录LLM响应完成时间
-        self.logger.bind(tag=TAG).info(f"[耗时统计] LLM响应完成: {time.time() - llm_start_time:.3f}s")
+        self.logger.bind(tag=TAG).info(f"[耗时统计] LLM响应完成: {time.time() - llm_start_time:.3f}s, 共收到 {token_count} 个token, tool_call_flag={tool_call_flag}")
         
         if tool_call_flag:
             bHasError = False
@@ -1034,6 +1043,38 @@ class ConnectionHandler:
                 self.logger.bind(tag=TAG).info(f"[耗时统计] 工具直接返回结果: {tool_call_data['name']}, action={result.action}")
                 self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
                 self.dialogue.put(Message(role="assistant", content=text))
+                
+                # 记录工具直接返回的对话（如退出意图）
+                if depth == 0:
+                    try:
+                        conv_logging_config = self.config.get("server", {}).get("conversation_logging", {})
+                        if conv_logging_config.get("enabled", True):
+                            # 获取用户输入（从对话历史中获取最后一条用户消息）
+                            user_input = ""
+                            for msg in reversed(self.dialogue.messages):
+                                if msg.role == "user" and msg.content:
+                                    user_input = msg.content
+                                    break
+                            
+                            if user_input:
+                                conv_logger = get_conversation_logger()
+                                conv_logger.log_conversation(
+                                    device_id=self.device_id,
+                                    session_id=self.session_id,
+                                    user_input=user_input,
+                                    ai_response=text,
+                                    timing={"tool_name": tool_call_data['name'], "action": str(result.action)},
+                                    tool_calls=[{
+                                        "name": tool_call_data['name'],
+                                        "arguments": tool_call_data.get('arguments', {}),
+                                        "result": text[:200],
+                                        "action": str(result.action)
+                                    }],
+                                    error=None
+                                )
+                    except Exception as e:
+                        self.logger.bind(tag=TAG).warning(f"保存工具直接返回的对话记录失败: {e}")
+                        
             elif result.action == Action.REQLLM:
                 # 收集需要 LLM 处理的工具
                 self.logger.bind(tag=TAG).info(f"[耗时统计] 工具需要LLM处理: {tool_call_data['name']}")

@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import uuid
 import queue
 import base64
@@ -137,7 +138,8 @@ class TTSProvider(TTSProviderBase):
         if not filtered_text.strip():
             return
 
-        logger.bind(tag=TAG).debug(f"开始合成句子: {filtered_text[:30]}...")
+        start_time = time.time()
+        logger.bind(tag=TAG).info(f"[耗时统计] 开始合成句子: {filtered_text[:30]}...")
 
         headers = {}
         if self.api_key:
@@ -145,6 +147,7 @@ class TTSProvider(TTSProviderBase):
 
         ws = None
         first_audio_sent = False  # 标记是否已发送第一段音频
+        first_audio_time = None  # 记录首个音频包到达时间
         
         try:
             ws = await asyncio.wait_for(
@@ -156,6 +159,7 @@ class TTSProvider(TTSProviderBase):
                 ),
                 timeout=10  # 连接超时增加到 10 秒
             )
+            logger.bind(tag=TAG).debug(f"[耗时统计] WebSocket连接建立: {time.time() - start_time:.3f}s")
 
             session_param = self._build_session_param()
 
@@ -165,6 +169,7 @@ class TTSProvider(TTSProviderBase):
                 "endFlag": True,
             }
             await ws.send(json.dumps(request))
+            logger.bind(tag=TAG).debug(f"[耗时统计] 发送TTS请求: {time.time() - start_time:.3f}s")
 
             # 边收边播
             while True:
@@ -201,6 +206,8 @@ class TTSProvider(TTSProviderBase):
                         # 第一段音频时发送 FIRST 通知
                         if not first_audio_sent:
                             first_audio_sent = True
+                            first_audio_time = time.time() - start_time
+                            logger.bind(tag=TAG).info(f"[耗时统计] TTS首个音频包返回: {first_audio_time:.3f}s")
                             self.tts_audio_queue.put((SentenceType.FIRST, [], filtered_text))
 
                         # 立即编码并推送（流式）
@@ -211,7 +218,7 @@ class TTSProvider(TTSProviderBase):
                         logger.bind(tag=TAG).error(f"处理音频数据失败: {e}")
 
                 if end_flag:
-                    logger.bind(tag=TAG).info(f"句子语音生成成功: {filtered_text[:30]}...")
+                    logger.bind(tag=TAG).info(f"[耗时统计] 句子合成完成: {filtered_text[:30]}..., 总耗时: {time.time() - start_time:.3f}s")
                     break
 
         except asyncio.TimeoutError:
@@ -256,7 +263,6 @@ class TTSProvider(TTSProviderBase):
                 if is_last and not self._last_sent:
                     self._last_sent = True
                     self._process_before_stop_play_files()
-                    # 注意：_process_before_stop_play_files 内部已经发送了 LAST，不要重复发送
                     
             except asyncio.CancelledError:
                 logger.bind(tag=TAG).debug("句子合成循环被取消")
@@ -326,11 +332,13 @@ class TTSProvider(TTSProviderBase):
                     if message.content_detail and self.sentence_queue:
                         # 添加到缓冲区
                         self.text_buffer += message.content_detail
+                        logger.bind(tag=TAG).debug(f"收到文本片段: {message.content_detail[:20]}..., 当前缓冲区长度: {len(self.text_buffer)}")
 
                         # 尝试提取并合成完整的句子
                         while True:
                             sentence = self._extract_sentence()
                             if sentence and self.sentence_queue:
+                                logger.bind(tag=TAG).info(f"[耗时统计] 提取到完整句子: {sentence[:30]}...")
                                 # 放入句子队列
                                 asyncio.run_coroutine_threadsafe(
                                     self.sentence_queue.put((sentence, False)),

@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import json
 import queue
@@ -169,6 +170,12 @@ class TTSProvider(TTSProviderBase):
         self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
             sample_rate=16000, channels=1, frame_size_ms=60
         )
+        
+        # 时间统计变量
+        self.session_start_time = 0  # 会话开始时间
+        self.first_audio_time = 0  # 首个音频包到达时间
+        self.text_send_time = 0  # 文本发送时间
+        
         model_key_msg = check_model_key("TTS", self.access_token)
         if model_key_msg:
             logger.bind(tag=TAG).error(model_key_msg)
@@ -269,14 +276,16 @@ class TTSProvider(TTSProviderBase):
                             self.conn.sentence_id = uuid.uuid4().hex
                             logger.bind(tag=TAG).debug(f"自动生成新的 会话ID: {self.conn.sentence_id}")
 
-                        logger.bind(tag=TAG).debug("开始启动TTS会话...")
+                        self.session_start_time = time.time()
+                        self.first_audio_time = 0
+                        logger.bind(tag=TAG).info("[耗时统计] 开始启动TTS会话...")
                         future = asyncio.run_coroutine_threadsafe(
                             self.start_session(self.conn.sentence_id),
                             loop=self.conn.loop,
                         )
                         future.result()
                         self.before_stop_play_files.clear()
-                        logger.bind(tag=TAG).debug("TTS会话启动成功")
+                        logger.bind(tag=TAG).info(f"[耗时统计] TTS会话启动成功: {time.time() - self.session_start_time:.3f}s")
                     except Exception as e:
                         logger.bind(tag=TAG).error(f"启动TTS会话失败: {str(e)}")
                         continue
@@ -284,15 +293,16 @@ class TTSProvider(TTSProviderBase):
                 elif ContentType.TEXT == message.content_type:
                     if message.content_detail:
                         try:
-                            logger.bind(tag=TAG).debug(
-                                f"开始发送TTS文本: {message.content_detail}"
+                            self.text_send_time = time.time()
+                            logger.bind(tag=TAG).info(
+                                f"[耗时统计] 开始发送TTS文本: {message.content_detail[:30]}..."
                             )
                             future = asyncio.run_coroutine_threadsafe(
                                 self.text_to_speak(message.content_detail, None),
                                 loop=self.conn.loop,
                             )
                             future.result()
-                            logger.bind(tag=TAG).debug("TTS文本发送成功")
+                            logger.bind(tag=TAG).info(f"[耗时统计] TTS文本发送成功: {time.time() - self.text_send_time:.3f}s")
                         except Exception as e:
                             logger.bind(tag=TAG).error(f"发送TTS文本失败: {str(e)}")
                             continue
@@ -488,9 +498,19 @@ class TTSProvider(TTSProviderBase):
                         res.optional.event == EVENT_TTSResponse
                         and res.header.message_type == AUDIO_ONLY_RESPONSE
                     ):
+                        # 记录首个音频包到达时间
+                        if self.first_audio_time == 0 and self.text_send_time > 0:
+                            self.first_audio_time = time.time()
+                            ttfb = self.first_audio_time - self.text_send_time
+                            logger.bind(tag=TAG).info(f"[耗时统计] TTS首个音频包返回: {ttfb:.3f}s")
+                        
                         self.wav_to_opus_data_audio_raw_stream(res.payload, callback=self.handle_opus)
                     elif res.optional.event == EVENT_TTSSentenceEnd:
-                        logger.bind(tag=TAG).info(f"句子语音生成成功：{self.tts_text}")
+                        if self.text_send_time > 0:
+                            total_time = time.time() - self.text_send_time
+                            logger.bind(tag=TAG).info(f"[耗时统计] 句子合成完成: {self.tts_text[:30]}..., 总耗时: {total_time:.3f}s")
+                        else:
+                            logger.bind(tag=TAG).info(f"句子语音生成成功：{self.tts_text}")
                     elif res.optional.event == EVENT_SessionFinished:
                         logger.bind(tag=TAG).debug(f"会话结束～～")
                         self.activate_session = False
