@@ -1,19 +1,18 @@
 import os
-import time
 import uuid
 import json
 import queue
 import asyncio
 import traceback
-from typing import Callable, Any
 import websockets
+
+from typing import Callable, Any
 from core.utils.tts import MarkdownCleaner
 from config.logger import setup_logging
 from core.utils import opus_encoder_utils
 from core.utils.util import check_model_key
 from core.providers.tts.base import TTSProviderBase
 from core.providers.tts.dto.dto import SentenceType, ContentType, InterfaceType
-from asyncio import Task
 
 
 TAG = __name__
@@ -161,21 +160,20 @@ class TTSProvider(TTSProviderBase):
         self.speech_rate = int(speech_rate) if speech_rate else 0
         self.loudness_rate = int(loudness_rate) if loudness_rate else 0
         self.pitch = int(pitch) if pitch else 0
+        # 多情感音色参数
+        self.emotion = config.get("emotion", "neutral")  
+        emotion_scale = config.get("emotion_scale", "4")
+        self.emotion_scale = int(emotion_scale) if emotion_scale else 4
+
         self.ws_url = config.get("ws_url")
         self.authorization = config.get("authorization")
         self.header = {"Authorization": f"{self.authorization}{self.access_token}"}
         enable_ws_reuse_value = config.get("enable_ws_reuse", True)
-        self.enable_ws_reuse = False if str(enable_ws_reuse_value).lower() in ('false', 'False') else True
+        self.enable_ws_reuse = False if str(enable_ws_reuse_value).lower() == 'false' else True
         self.tts_text = ""
         self.opus_encoder = opus_encoder_utils.OpusEncoderUtils(
             sample_rate=16000, channels=1, frame_size_ms=60
         )
-        
-        # 时间统计变量
-        self.session_start_time = 0  # 会话开始时间
-        self.first_audio_time = 0  # 首个音频包到达时间
-        self.text_send_time = 0  # 文本发送时间
-        
         model_key_msg = check_model_key("TTS", self.access_token)
         if model_key_msg:
             logger.bind(tag=TAG).error(model_key_msg)
@@ -276,16 +274,14 @@ class TTSProvider(TTSProviderBase):
                             self.conn.sentence_id = uuid.uuid4().hex
                             logger.bind(tag=TAG).debug(f"自动生成新的 会话ID: {self.conn.sentence_id}")
 
-                        self.session_start_time = time.time()
-                        self.first_audio_time = 0
-                        logger.bind(tag=TAG).info("[耗时统计] 开始启动TTS会话...")
+                        logger.bind(tag=TAG).debug("开始启动TTS会话...")
                         future = asyncio.run_coroutine_threadsafe(
                             self.start_session(self.conn.sentence_id),
                             loop=self.conn.loop,
                         )
                         future.result()
                         self.before_stop_play_files.clear()
-                        logger.bind(tag=TAG).info(f"[耗时统计] TTS会话启动成功: {time.time() - self.session_start_time:.3f}s")
+                        logger.bind(tag=TAG).debug("TTS会话启动成功")
                     except Exception as e:
                         logger.bind(tag=TAG).error(f"启动TTS会话失败: {str(e)}")
                         continue
@@ -293,16 +289,15 @@ class TTSProvider(TTSProviderBase):
                 elif ContentType.TEXT == message.content_type:
                     if message.content_detail:
                         try:
-                            self.text_send_time = time.time()
-                            logger.bind(tag=TAG).info(
-                                f"[耗时统计] 开始发送TTS文本: {message.content_detail[:30]}..."
+                            logger.bind(tag=TAG).debug(
+                                f"开始发送TTS文本: {message.content_detail}"
                             )
                             future = asyncio.run_coroutine_threadsafe(
                                 self.text_to_speak(message.content_detail, None),
                                 loop=self.conn.loop,
                             )
                             future.result()
-                            logger.bind(tag=TAG).info(f"[耗时统计] TTS文本发送成功: {time.time() - self.text_send_time:.3f}s")
+                            logger.bind(tag=TAG).debug("TTS文本发送成功")
                         except Exception as e:
                             logger.bind(tag=TAG).error(f"发送TTS文本失败: {str(e)}")
                             continue
@@ -345,8 +340,9 @@ class TTSProvider(TTSProviderBase):
             #  过滤Markdown
             filtered_text = MarkdownCleaner.clean_markdown(text)
 
-            # 发送文本
-            await self.send_text(self.voice, filtered_text, self.conn.sentence_id)
+            if filtered_text:
+                # 发送文本
+                await self.send_text(self.voice, filtered_text, self.conn.sentence_id)
             return
         except Exception as e:
             logger.bind(tag=TAG).error(f"发送TTS文本失败: {str(e)}")
@@ -498,19 +494,9 @@ class TTSProvider(TTSProviderBase):
                         res.optional.event == EVENT_TTSResponse
                         and res.header.message_type == AUDIO_ONLY_RESPONSE
                     ):
-                        # 记录首个音频包到达时间
-                        if self.first_audio_time == 0 and self.text_send_time > 0:
-                            self.first_audio_time = time.time()
-                            ttfb = self.first_audio_time - self.text_send_time
-                            logger.bind(tag=TAG).info(f"[耗时统计] TTS首个音频包返回: {ttfb:.3f}s")
-                        
                         self.wav_to_opus_data_audio_raw_stream(res.payload, callback=self.handle_opus)
                     elif res.optional.event == EVENT_TTSSentenceEnd:
-                        if self.text_send_time > 0:
-                            total_time = time.time() - self.text_send_time
-                            logger.bind(tag=TAG).info(f"[耗时统计] 句子合成完成: {self.tts_text[:30]}..., 总耗时: {total_time:.3f}s")
-                        else:
-                            logger.bind(tag=TAG).info(f"句子语音生成成功：{self.tts_text}")
+                        logger.bind(tag=TAG).info(f"句子语音生成成功：{self.tts_text}")
                     elif res.optional.event == EVENT_SessionFinished:
                         logger.bind(tag=TAG).debug(f"会话结束～～")
                         self.activate_session = False
@@ -662,6 +648,19 @@ class TTSProvider(TTSProviderBase):
         audio_format="pcm",
         audio_sample_rate=16000,
     ):
+        audio_params = {
+            "format": audio_format,
+            "sample_rate": audio_sample_rate,
+            "speech_rate": self.speech_rate,
+            "loudness_rate": self.loudness_rate
+        }
+
+        # 如果是多情感音色,添加情感参数
+        if '_emo_' in self.voice:
+            if self.emotion:
+                audio_params["emotion"] = self.emotion
+                audio_params["emotion_scale"] = self.emotion_scale
+
         return str.encode(
             json.dumps(
                 {
@@ -671,12 +670,7 @@ class TTSProvider(TTSProviderBase):
                     "req_params": {
                         "text": text,
                         "speaker": speaker,
-                        "audio_params": {
-                            "format": audio_format,
-                            "sample_rate": audio_sample_rate,
-                            "speech_rate": self.speech_rate,
-                            "loudness_rate": self.loudness_rate
-                        },
+                        "audio_params": audio_params,
                         "additions": json.dumps({
                             "post_process": {
                                 "pitch": self.pitch
