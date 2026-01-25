@@ -120,12 +120,27 @@ class LLMProvider(LLMProviderBase):
             for key, value in optional_params.items():
                 if value is not None:
                     request_params[key] = value
+            
+            # 如果是智谱 GLM 模型，关闭思考模式
+            if "glm" in self.model_name.lower():
+                request_params["extra_body"] = {
+                    "thinking": {
+                        "type": "disabled"  # 关闭思考模式
+                    }
+                }
+                logger.bind(tag=TAG).info(f"检测到 GLM 模型，已关闭思考模式")
 
             stream = self.client.chat.completions.create(**request_params)
 
             for chunk in stream:
                 if getattr(chunk, "choices", None):
                     delta = chunk.choices[0].delta
+                    
+                    # 跳过 reasoning_content（思考内容）
+                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                        logger.bind(tag=TAG).debug(f"跳过思考内容: {delta.reasoning_content[:50]}...")
+                        continue
+                    
                     content = getattr(delta, "content", "")
                     tool_calls = getattr(delta, "tool_calls", None)
                     yield content, tool_calls
