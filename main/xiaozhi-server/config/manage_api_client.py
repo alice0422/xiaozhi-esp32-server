@@ -60,6 +60,10 @@ class ManageApiClient:
 
             # 为每个事件循环创建独立的客户端
             if loop_id not in cls._async_clients:
+                # 服务端可能主动关闭连接，httpx 连接池无法正确检测和清理
+                limits = httpx.Limits(
+                    max_keepalive_connections=0,  # 禁用 keep-alive，每次都新建连接
+                )
                 cls._async_clients[loop_id] = httpx.AsyncClient(
                     base_url=cls.config.get("url"),
                     headers={
@@ -68,6 +72,7 @@ class ManageApiClient:
                         "Authorization": "Bearer " + cls._secret,
                     },
                     timeout=cls.config.get("timeout", 30),
+                    limits=limits,  # 使用限制
                 )
             return cls._async_clients[loop_id]
         except RuntimeError:
@@ -80,21 +85,27 @@ class ManageApiClient:
         # 确保客户端已创建
         client = await cls._ensure_async_client()
         endpoint = endpoint.lstrip("/")
-        response = await client.request(method, endpoint, **kwargs)
-        response.raise_for_status()
+        response = None
+        try:
+            response = await client.request(method, endpoint, **kwargs)
+            response.raise_for_status()
 
-        result = response.json()
+            result = response.json()
 
-        # 处理API返回的业务错误
-        if result.get("code") == 10041:
-            raise DeviceNotFoundException(result.get("msg"))
-        elif result.get("code") == 10042:
-            raise DeviceBindException(result.get("msg"))
-        elif result.get("code") != 0:
-            raise Exception(f"API返回错误: {result.get('msg', '未知错误')}")
+            # 处理API返回的业务错误
+            if result.get("code") == 10041:
+                raise DeviceNotFoundException(result.get("msg"))
+            elif result.get("code") == 10042:
+                raise DeviceBindException(result.get("msg"))
+            elif result.get("code") != 0:
+                raise Exception(f"API返回错误: {result.get('msg', '未知错误')}")
 
-        # 返回成功数据
-        return result.get("data") if result.get("code") == 0 else None
+            # 返回成功数据
+            return result.get("data") if result.get("code") == 0 else None
+        finally:
+            # 确保响应被关闭（即使异常也会执行）
+            if response is not None:
+                await response.aclose()
 
     @classmethod
     def _should_retry(cls, exception: Exception) -> bool:
