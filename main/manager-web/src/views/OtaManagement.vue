@@ -173,8 +173,8 @@ export default {
         fetchFirmwareList() {
             this.loading = true;
             const params = {
-                pageNum: this.currentPage,
-                pageSize: this.pageSize,
+                page: this.currentPage,
+                limit: this.pageSize,
                 firmwareName: this.searchName || "",
                 orderField: "create_date",
                 order: "desc"
@@ -299,9 +299,9 @@ export default {
             }
 
             const paramCount = params.length;
-            this.$confirm(this.$t('otaManagement.confirmBatchDelete', { paramCount }), 'Warning', {
-                confirmButtonText: 'OK',
-                cancelButtonText: 'Cancel',
+            this.$confirm(this.$t('otaManagement.confirmBatchDelete', { paramCount }), this.$t('common.warning'), {
+                confirmButtonText: this.$t('common.confirm'),
+                cancelButtonText: this.$t('common.cancel'),
                 type: 'warning',
                 distinguishCancelAndClose: true
             }).then(() => {

@@ -167,7 +167,7 @@
         </div>
 
         <img loading="lazy" alt="" src="@/assets/home/avatar.png" class="avatar-img" @click="handleAvatarClick" />
-        <span class="el-dropdown-link" @click="handleAvatarClick">
+        <span class="el-user-dropdown" @click="handleAvatarClick">
           {{ userInfo.username || "加载中..." }}
           <i class="el-icon-arrow-down el-icon--right" :class="{ 'rotate-down': userMenuVisible }"></i>
         </span>
@@ -408,18 +408,8 @@ export default {
       // 保存搜索历史
       this.saveSearchHistory(searchValue);
 
-      try {
-        // 创建不区分大小写的正则表达式
-        const regex = new RegExp(searchValue, "i");
-        // 触发搜索事件，将正则表达式传递给父组件
-        this.$emit("search", regex);
-      } catch (error) {
-        console.error("正则表达式创建失败:", error);
-        this.$message.error({
-          message: this.$t("message.error"),
-          showClose: true,
-        });
-      }
+      // 触发搜索事件，将搜索关键词传递给父组件
+      this.$emit("search", searchValue);
 
       // 搜索完成后让输入框失去焦点，从而触发blur事件隐藏搜索历史
       if (this.$refs.searchInput) {
@@ -678,6 +668,7 @@ export default {
   align-items: center;
   gap: 10px;
   min-width: 120px;
+  cursor: pointer;
 }
 
 .logo-img {
@@ -805,11 +796,15 @@ export default {
   color: #909399;
   visibility: hidden;
 }
-
+.more-dropdown {
+  padding: 0;
+}
 .more-dropdown .el-dropdown-link {
   display: flex;
   align-items: center;
   gap: 7px;
+  height: 100%;
+  padding: 0 15px;
 }
 
 .search-history-item:hover .clear-item-icon {
@@ -849,6 +844,9 @@ export default {
   width: 21px;
   height: 21px;
   flex-shrink: 0;
+  cursor: pointer;
+}
+.el-user-dropdown {
   cursor: pointer;
 }
 

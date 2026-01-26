@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import cn.hutool.core.collection.ListUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,7 @@ import xiaozhi.common.constant.Constant;
 import xiaozhi.common.page.PageData;
 import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.JsonUtils;
+import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.agent.Enums.AgentChatHistoryType;
 import xiaozhi.modules.agent.dao.AiAgentChatHistoryDao;
 import xiaozhi.modules.agent.dto.AgentChatHistoryDTO;
@@ -86,13 +88,12 @@ public class AgentChatHistoryServiceImpl extends ServiceImpl<AiAgentChatHistoryD
         if (deleteAudio) {
             // 分批删除音频,避免超时
             List<String> audioIds = baseMapper.getAudioIdsByAgentId(agentId);
-            if (audioIds != null && !audioIds.isEmpty()) {
-                int batchSize = 1000; // 每批删除1000条
-                for (int i = 0; i < audioIds.size(); i += batchSize) {
-                    int end = Math.min(i + batchSize, audioIds.size());
-                    List<String> batch = audioIds.subList(i, end);
-                    baseMapper.deleteAudioByIds(batch);
-                }
+            if (ToolUtil.isNotEmpty(audioIds)) {
+                // 每批删除1000条
+                List<List<String>> batch = ListUtil.split(audioIds, 1000);
+                batch.forEach(dataList->{
+                    baseMapper.deleteAudioByIds(dataList);
+                });
             }
         }
         if (deleteAudio && !deleteText) {

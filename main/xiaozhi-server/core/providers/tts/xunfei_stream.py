@@ -237,10 +237,10 @@ class TTSProvider(TTSProviderBase):
                 return
 
             filtered_text = MarkdownCleaner.clean_markdown(text)
-
-            # 发送文本合成请求
-            run_request = self._build_base_request(status=1,text=filtered_text)
-            await self.ws.send(json.dumps(run_request))
+            if filtered_text:
+                # 发送文本合成请求
+                run_request = self._build_base_request(status=1,text=filtered_text)
+                await self.ws.send(json.dumps(run_request))
             return
 
         except Exception as e:

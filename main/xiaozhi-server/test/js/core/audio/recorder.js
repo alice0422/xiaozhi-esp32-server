@@ -307,14 +307,7 @@ export class AudioRecorder {
 
             // 发送监听开始消息
             if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-                const listenMessage = {
-                    type: 'listen',
-                    mode: 'manual',
-                    state: 'start'
-                };
-
-                log(`发送录音开始消息: ${JSON.stringify(listenMessage)}`, 'info');
-                this.websocket.send(JSON.stringify(listenMessage));
+                log(`发送录音开始消息`, 'info');
             } else {
                 log('WebSocket未连接，无法发送开始消息', 'error');
                 return false;
@@ -324,6 +317,11 @@ export class AudioRecorder {
             if (this.onVisualizerUpdate) {
                 const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
                 this.startVisualization(dataArray);
+            }
+
+            // 立即通知录音开始，更新按钮状态
+            if (this.onRecordingStart) {
+                this.onRecordingStart(0);
             }
 
             // 启动录音计时器
@@ -398,14 +396,6 @@ export class AudioRecorder {
             if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
                 const emptyOpusFrame = new Uint8Array(0);
                 this.websocket.send(emptyOpusFrame);
-
-                const stopMessage = {
-                    type: 'listen',
-                    mode: 'manual',
-                    state: 'stop'
-                };
-
-                this.websocket.send(JSON.stringify(stopMessage));
                 log('已发送录音停止信号', 'info');
             }
 

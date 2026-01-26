@@ -1,5 +1,4 @@
 import { log } from '../../utils/logger.js';
-import { updateScriptStatus } from '../../ui/dom-helper.js'
 
 
 // 检查Opus库是否已加载
@@ -15,7 +14,6 @@ export function checkOpusLoaded() {
             // 使用Module.instance对象替换全局Module对象
             window.ModuleInstance = Module.instance;
             log('Opus库加载成功（使用Module.instance）', 'success');
-            updateScriptStatus('Opus库加载成功', 'success');
 
             // 3秒后隐藏状态
             const statusElement = document.getElementById('scriptStatus');
@@ -27,7 +25,6 @@ export function checkOpusLoaded() {
         if (typeof Module._opus_decoder_get_size === 'function') {
             window.ModuleInstance = Module;
             log('Opus库加载成功（使用全局Module）', 'success');
-            updateScriptStatus('Opus库加载成功', 'success');
 
             // 3秒后隐藏状态
             const statusElement = document.getElementById('scriptStatus');
@@ -38,7 +35,6 @@ export function checkOpusLoaded() {
         throw new Error('Opus解码函数未找到，可能Module结构不正确');
     } catch (err) {
         log(`Opus库加载失败，请检查libopus.js文件是否存在且正确: ${err.message}`, 'error');
-        updateScriptStatus('Opus库加载失败，请检查libopus.js文件是否存在且正确', 'error');
     }
 }
 

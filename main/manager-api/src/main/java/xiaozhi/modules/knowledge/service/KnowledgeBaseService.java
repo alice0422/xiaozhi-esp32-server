@@ -7,6 +7,7 @@ import xiaozhi.common.page.PageData;
 import xiaozhi.common.service.BaseService;
 import xiaozhi.modules.knowledge.dto.KnowledgeBaseDTO;
 import xiaozhi.modules.knowledge.entity.KnowledgeBaseEntity;
+import xiaozhi.modules.model.entity.ModelConfigEntity;
 
 /**
  * 知识库知识库服务接口
@@ -56,6 +57,14 @@ public interface KnowledgeBaseService extends BaseService<KnowledgeBaseEntity> {
     KnowledgeBaseDTO getByDatasetId(String datasetId);
 
     /**
+     * 根据知识库ID集合查询知识库
+     *
+     * @param datasetIdList 知识库ID集合
+     * @return 知识库详情
+     */
+    List<KnowledgeBaseDTO> getByDatasetIdList(List<String> datasetIdList);
+
+    /**
      * 根据知识库ID删除知识库
      * 
      * @param datasetId 知识库ID
@@ -83,5 +92,5 @@ public interface KnowledgeBaseService extends BaseService<KnowledgeBaseEntity> {
      * 
      * @return RAG模型列表
      */
-    List<Map<String, Object>> getRAGModels();
+    List<ModelConfigEntity> getRAGModels();
 }

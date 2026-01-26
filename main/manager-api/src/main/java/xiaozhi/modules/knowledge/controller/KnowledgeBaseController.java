@@ -1,7 +1,6 @@
 package xiaozhi.modules.knowledge.controller;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
@@ -24,8 +23,10 @@ import xiaozhi.common.exception.ErrorCode;
 import xiaozhi.common.exception.RenException;
 import xiaozhi.common.page.PageData;
 import xiaozhi.common.utils.Result;
+import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.knowledge.dto.KnowledgeBaseDTO;
 import xiaozhi.modules.knowledge.service.KnowledgeBaseService;
+import xiaozhi.modules.model.entity.ModelConfigEntity;
 import xiaozhi.modules.security.user.SecurityUser;
 
 @AllArgsConstructor
@@ -131,20 +132,17 @@ public class KnowledgeBaseController {
 
         // 获取当前登录用户ID
         Long currentUserId = SecurityUser.getUserId();
-        String[] idArray = ids.split(",");
-        for (String datasetId : idArray) {
-            if (StringUtils.isNotBlank(datasetId)) {
-                // 先获取现有知识库信息以检查权限
-                KnowledgeBaseDTO existingKnowledgeBase = knowledgeBaseService.getByDatasetId(datasetId.trim());
-
+        List<String> idList = Arrays.asList(ids.split(","));
+        List<KnowledgeBaseDTO> knowledgeBaseDTOs = Optional.ofNullable(knowledgeBaseService.getByDatasetIdList(idList)).orElseGet(ArrayList::new);
+        if (ToolUtil.isNotEmpty(knowledgeBaseDTOs)) {
+            knowledgeBaseDTOs.forEach(item->{
                 // 检查权限：用户只能删除自己创建的知识库
-                if (existingKnowledgeBase.getCreator() == null
-                        || !existingKnowledgeBase.getCreator().equals(currentUserId)) {
+                if (item.getCreator() == null || !item.getCreator().equals(currentUserId)) {
                     throw new RenException(ErrorCode.NO_PERMISSION);
                 }
-
-                knowledgeBaseService.deleteByDatasetId(datasetId.trim());
-            }
+                //删除
+                knowledgeBaseService.deleteByDatasetId(item.getDatasetId());
+            });
         }
         return new Result<>();
     }
@@ -152,8 +150,8 @@ public class KnowledgeBaseController {
     @GetMapping("/rag-models")
     @Operation(summary = "获取RAG模型列表")
     @RequiresPermissions("sys:role:normal")
-    public Result<List<Map<String, Object>>> getRAGModels() {
-        List<Map<String, Object>> result = knowledgeBaseService.getRAGModels();
-        return new Result<List<Map<String, Object>>>().ok(result);
+    public Result<List<ModelConfigEntity>> getRAGModels() {
+        List<ModelConfigEntity> result = knowledgeBaseService.getRAGModels();
+        return new Result<List<ModelConfigEntity>>().ok(result);
     }
 }

@@ -95,6 +95,9 @@ export default {
                 RequestService.clearRequestTime();
                 callback(res);
             })
+            .fail((res) => {
+                callback(res);
+            })
             .networkFail((err) => {
                 console.error('获取设备状态失败:', err);
                 RequestService.reAjaxFun(() => {

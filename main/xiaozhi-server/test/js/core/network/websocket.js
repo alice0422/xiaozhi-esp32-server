@@ -1,11 +1,11 @@
 // WebSocket消息处理模块
-import { log } from '../../utils/logger.js';
-import { addMessage } from '../../ui/dom-helper.js';
-import { webSocketConnect } from './ota-connector.js';
 import { getConfig, saveConnectionUrls } from '../../config/manager.js';
+import { uiController } from '../../ui/controller.js';
+import { log } from '../../utils/logger.js';
 import { getAudioPlayer } from '../audio/player.js';
 import { getAudioRecorder } from '../audio/recorder.js';
-import { getMcpTools, executeMcpTool, setWebSocket as setMcpWebSocket } from '../mcp/tools.js';
+import { executeMcpTool, getMcpTools, setWebSocket as setMcpWebSocket } from '../mcp/tools.js';
+import { webSocketConnect } from './ota-connector.js';
 
 // WebSocket处理器类
 export class WebSocketHandler {
@@ -15,6 +15,7 @@ export class WebSocketHandler {
         this.onRecordButtonStateChange = null;
         this.onSessionStateChange = null;
         this.onSessionEmotionChange = null;
+        this.onChatMessage = null; // 新增：聊天消息回调
         this.currentSessionId = null;
         this.isRemoteSpeaking = false;
     }
@@ -73,36 +74,52 @@ export class WebSocketHandler {
     handleTextMessage(message) {
         if (message.type === 'hello') {
             log(`服务器回应：${JSON.stringify(message, null, 2)}`, 'success');
+            uiController.startAIChatSession();
         } else if (message.type === 'tts') {
             this.handleTTSMessage(message);
         } else if (message.type === 'audio') {
             log(`收到音频控制消息: ${JSON.stringify(message)}`, 'info');
         } else if (message.type === 'stt') {
             log(`识别结果: ${message.text}`, 'info');
-            addMessage(`${message.text}`, true);
+            // 使用新的聊天消息回调显示STT消息
+            if (this.onChatMessage && message.text) {
+                this.onChatMessage(message.text, true);
+            }
         } else if (message.type === 'llm') {
             log(`大模型回复: ${message.text}`, 'info');
+            // 使用新的聊天消息回调显示LLM回复
+            if (this.onChatMessage && message.text) {
+                this.onChatMessage(message.text, false);
+            }
 
-            // 如果包含表情，更新sessionStatus表情
+            // 如果包含表情，更新sessionStatus表情并触发Live2D动作
             if (message.text && /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u.test(message.text)) {
                 // 提取表情符号
                 const emojiMatch = message.text.match(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u);
                 if (emojiMatch && this.onSessionEmotionChange) {
                     this.onSessionEmotionChange(emojiMatch[0]);
                 }
+
+                // 触发Live2D情绪动作
+                if (message.emotion) {
+                    console.log(`收到情绪消息: emotion=${message.emotion}, text=${message.text}`);
+                    this.triggerLive2DEmotionAction(message.emotion);
+                }
             }
 
             // 只有当文本不仅仅是表情时，才添加到对话中
             // 移除文本中的表情后检查是否还有内容
             const textWithoutEmoji = message.text ? message.text.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim() : '';
-            if (textWithoutEmoji) {
-                addMessage(message.text);
+            if (textWithoutEmoji && this.onChatMessage) {
+                this.onChatMessage(message.text, false);
             }
         } else if (message.type === 'mcp') {
             this.handleMCPMessage(message);
         } else {
             log(`未知消息类型: ${message.type}`, 'info');
-            addMessage(JSON.stringify(message, null, 2));
+            if (this.onChatMessage) {
+                this.onChatMessage(`未知消息类型: ${message.type}\n${JSON.stringify(message, null, 2)}`, false);
+            }
         }
     }
 
@@ -115,13 +132,26 @@ export class WebSocketHandler {
             if (this.onSessionStateChange) {
                 this.onSessionStateChange(true);
             }
+
+            // 启动Live2D说话动画
+            this.startLive2DTalking();
         } else if (message.state === 'sentence_start') {
             log(`服务器发送语音段: ${message.text}`, 'info');
-            if (message.text) {
-                addMessage(message.text);
+            this.ttsSentenceCount = (this.ttsSentenceCount || 0) + 1;
+
+            if (message.text && this.onChatMessage) {
+                this.onChatMessage(message.text, false);
+            }
+
+            // 确保动画在句子开始时运行
+            const live2dManager = window.chatApp?.live2dManager;
+            if (live2dManager && !live2dManager.isTalking) {
+                this.startLive2DTalking();
             }
         } else if (message.state === 'sentence_end') {
             log(`语音段结束: ${message.text}`, 'info');
+
+            // 句子结束时不清除动画，等待下一个句子或最终停止
         } else if (message.state === 'stop') {
             log('服务器语音传输结束，清空所有音频缓冲', 'info');
 
@@ -136,6 +166,57 @@ export class WebSocketHandler {
             if (this.onSessionStateChange) {
                 this.onSessionStateChange(false);
             }
+
+            // 延迟停止Live2D说话动画，确保所有句子都播放完毕
+            setTimeout(() => {
+                this.stopLive2DTalking();
+                this.ttsSentenceCount = 0; // 重置计数器
+            }, 1000); // 1秒延迟，确保所有句子都完成
+        }
+    }
+
+    // 启动Live2D说话动画
+    startLive2DTalking() {
+        try {
+            // 获取Live2D管理器实例
+            const live2dManager = window.chatApp?.live2dManager;
+            if (live2dManager && live2dManager.live2dModel) {
+                // 使用音频播放器的分析器节点
+                live2dManager.startTalking();
+                log('Live2D说话动画已启动', 'info');
+            }
+        } catch (error) {
+            log(`启动Live2D说话动画失败: ${error.message}`, 'error');
+        }
+    }
+
+    // 停止Live2D说话动画
+    stopLive2DTalking() {
+        try {
+            const live2dManager = window.chatApp?.live2dManager;
+            if (live2dManager) {
+                live2dManager.stopTalking();
+                log('Live2D说话动画已停止', 'info');
+            }
+        } catch (error) {
+            log(`停止Live2D说话动画失败: ${error.message}`, 'error');
+        }
+    }
+
+    // 初始化Live2D音频分析器
+    initializeLive2DAudioAnalyzer() {
+        try {
+            const live2dManager = window.chatApp?.live2dManager;
+            if (live2dManager) {
+                // 初始化音频分析器（使用音频播放器的上下文）
+                if (live2dManager.initializeAudioAnalyzer()) {
+                    log('Live2D音频分析器初始化完成，已连接到音频播放器', 'success');
+                } else {
+                    log('Live2D音频分析器初始化失败，将使用模拟动画', 'warning');
+                }
+            }
+        } catch (error) {
+            log(`初始化Live2D音频分析器失败: ${error.message}`, 'error');
         }
     }
 
@@ -192,6 +273,26 @@ export class WebSocketHandler {
             this.websocket.send(replyMessage);
         } else if (payload.method === 'initialize') {
             log(`收到工具初始化请求: ${JSON.stringify(payload.params)}`, 'info');
+            const replyMessage = JSON.stringify({
+                "session_id": message.session_id || "",
+                "type": "mcp",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": payload.id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "xiaozhi-web-test",
+                            "version": "2.1.0"
+                        }
+                    }
+                }
+            });
+            log(`回复初始化响应`, 'info');
+            this.websocket.send(replyMessage);
         } else {
             log(`未知的MCP方法: ${payload.method}`, 'warning');
         }
@@ -272,6 +373,9 @@ export class WebSocketHandler {
                 this.onSessionStateChange(false);
             }
 
+            // 在WebSocket连接成功时初始化Live2D音频分析器
+            this.initializeLive2DAudioAnalyzer();
+
             await this.sendHelloMessage();
         };
 
@@ -304,9 +408,8 @@ export class WebSocketHandler {
                 }
             } catch (error) {
                 log(`WebSocket消息处理错误: ${error.message}`, 'error');
-                if (typeof event.data === 'string') {
-                    addMessage(event.data);
-                }
+                // 不再使用旧的addMessage函数，因为conversationDiv元素不存在
+                // 错误消息将通过其他方式显示
             }
         };
     }
@@ -340,7 +443,6 @@ export class WebSocketHandler {
 
             const listenMessage = {
                 type: 'listen',
-                mode: 'manual',
                 state: 'detect',
                 text: text
             };
@@ -352,6 +454,24 @@ export class WebSocketHandler {
         } catch (error) {
             log(`发送消息错误: ${error.message}`, 'error');
             return false;
+        }
+    }
+
+    /**
+     * 触发Live2D情绪动作
+     * @param {string} emotion - 情绪名称
+     */
+    triggerLive2DEmotionAction(emotion) {
+        try {
+            const live2dManager = window.chatApp?.live2dManager;
+            if (live2dManager && typeof live2dManager.triggerEmotionAction === 'function') {
+                live2dManager.triggerEmotionAction(emotion);
+                log(`触发Live2D情绪动作: ${emotion}`, 'info');
+            } else {
+                log(`无法触发Live2D情绪动作: Live2D管理器未找到或方法不可用`, 'warning');
+            }
+        } catch (error) {
+            log(`触发Live2D情绪动作失败: ${error.message}`, 'error');
         }
     }
 

@@ -296,7 +296,7 @@ ASR:
     # 第一句：mkdir -p ./funasr-runtime-resources/models
     # 第二句：sudo docker run -p 10096:10095 -it --privileged=true -v $PWD/funasr-runtime-resources/models:/workspace/models registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12
     # 上一句话执行后会进入到容器，继续第三句：cd FunASR/runtime
-    # 不要退出容器，继续在容器中执行第四句：nohup bash run_server_2pass.sh --download-model-dir /workspace/models --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx  --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx  --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst --itn-dir thuduj12/fst_itn_zh --hotword /workspace/models/hotwords.txt > log.txt 2>&1 &
+    # 不要退出容器，继续在容器中执行第四句：nohup bash run_server_2pass.sh --download-model-dir /workspace/models --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx --model-dir iic/SenseVoiceSmall-onnx  --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx  --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst --itn-dir thuduj12/fst_itn_zh --hotword /workspace/models/hotwords.txt > log.txt 2>&1 &
     # 上一句话执行后会进入到容器，继续第五句：tail -f log.txt
     # 第五句话执行完后，会看到模型下载日志，下载完后就可以连接使用了
     # 以上是使用CPU推理，如果有GPU，详细参考：https://github.com/modelscope/FunASR/blob/main/runtime/docs/SDK_advanced_guide_online_zh.md
@@ -346,6 +346,11 @@ ASR:
     # 热词、替换词使用流程：https://www.volcengine.com/docs/6561/155738
     boosting_table_name: （选填）你的热词文件名称
     correct_table_name: （选填）你的替换词文件名称
+    # 是否开启多语种识别模式
+    enable_multilingual: False
+    # 多语种识别当该键为空时，该模型支持中英文、上海话、闽南语，四川、陕西、粤语识别。当将其设置为特定键时，它可以识别指定语言。
+    # 详细语言列表参考 https://www.volcengine.com/docs/6561/1354869
+    # language: zh-cn
     # 静音判定时长(ms)，默认200ms
     end_window_size: 200
     output_dir: tmp/
@@ -478,7 +483,32 @@ ASR:
     accent: mandarin # 方言，mandarin:普通话
     # 调整音频处理参数以提高长语音识别质量
     output_dir: tmp/
-  
+  AliyunBLStreamASR:
+    # 阿里百炼Paraformer实时语音识别服务
+    # WebSocket实时流式语音识别，支持多语言、热词定制、语义断句等高级功能
+    # 平台地址：https://bailian.console.aliyun.com/
+    # API Key地址：https://bailian.console.aliyun.com/#/api-key
+    # 文档地址：https://help.aliyun.com/zh/model-studio/websocket-for-paraformer-real-time-service
+    # 支持模型：paraformer-realtime-v2(推荐), paraformer-realtime-8k-v2, paraformer-realtime-v1, paraformer-realtime-8k-v1
+    type: aliyunbl_stream
+    # 必填参数
+    api_key: 你的阿里云百炼API密钥
+    # 模型选择，推荐使用v2版本
+    model: paraformer-realtime-v2
+    # 音频格式和采样率
+    format: pcm
+    sample_rate: 16000  # v2支持任意采样率，v1仅支持16000，8k版本仅支持8000
+    # 可选参数
+    disfluency_removal_enabled: false  # 是否过滤语气词(如"嗯"、"啊"等)
+    semantic_punctuation_enabled: false  # 语义断句(true:会议场景,准确;false:VAD断句,交互场景,低延迟)
+    max_sentence_silence: 200  # VAD断句静音时长阈值(ms)，范围200-6000，仅VAD断句时生效
+    multi_threshold_mode_enabled: false  # 防止VAD断句切割过长，仅VAD断句时生效
+    punctuation_prediction_enabled: true  # 是否自动添加标点符号
+    inverse_text_normalization_enabled: true  # 是否开启ITN(中文数字转阿拉伯数字)
+    # 热词定制文档地址：https://help.aliyun.com/zh/model-studio/custom-hot-words?
+    # vocabulary_id: vocab-xxx-24ee19fa8cfb4d52902170a0xxxxxxxx  # 热词ID(可选)
+    # language_hints: ["zh", "en"]  # 指定语言(可选)，支持zh、en、ja、yue、ko、de、fr、ru
+    output_dir: tmp/  
 VAD:
   SileroVAD:
     type: silero
@@ -687,6 +717,10 @@ TTS:
     speech_rate: 0
     loudness_rate: 0
     pitch: 0
+    # 多情感音色参数，注意：当前仅部分音色支持设置情感。
+    # 相关音色列表：https://www.volcengine.com/docs/6561/1257544
+    emotion: "neutral"  # 情感类型，可选值为：neutral、happy、sad、angry、fearful、disgusted、surprised
+    emotion_scale: 4  # 情感强度，可选值为：1~5，默认值为4
   CosyVoiceSiliconflow:
     type: siliconflow
     # 硅基流动TTS

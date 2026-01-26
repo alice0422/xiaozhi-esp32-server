@@ -4,12 +4,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
@@ -30,8 +26,11 @@ import xiaozhi.common.page.PageData;
 import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.DateUtils;
+import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.model.entity.ModelConfigEntity;
 import xiaozhi.modules.model.service.ModelConfigService;
+import xiaozhi.modules.sys.dao.SysUserDao;
+import xiaozhi.modules.sys.entity.SysUserEntity;
 import xiaozhi.modules.sys.service.SysUserService;
 import xiaozhi.modules.voiceclone.dao.VoiceCloneDao;
 import xiaozhi.modules.voiceclone.dto.VoiceCloneDTO;
@@ -47,6 +46,7 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
 
     private final ModelConfigService modelConfigService;
     private final SysUserService sysUserService;
+    private final SysUserDao sysUserDao;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -104,9 +104,11 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
             }
         }
 
+        // 批量保存
+        List<VoiceCloneEntity> batchInsertList = new ArrayList<>();
         // 遍历选择的音色ID，为每个音色ID创建一条记录
         int index = 0;
-        String namePrefix = DateUtils.format(new java.util.Date(), "MMddHHmm");
+        String namePrefix = DateUtils.format(new Date(), "MMddHHmm");
         for (String voiceId : dto.getVoiceIds()) {
             index++;
             VoiceCloneEntity entity = new VoiceCloneEntity();
@@ -115,8 +117,10 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
             entity.setName(namePrefix + "_" + index);
             entity.setUserId(dto.getUserId());
             entity.setTrainStatus(0); // 默认训练中
-
-            baseDao.insert(entity);
+            batchInsertList.add(entity);
+        }
+        if (ToolUtil.isNotEmpty(batchInsertList)) {
+            insertBatch(batchInsertList);
         }
     }
 
@@ -187,6 +191,11 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
 
         List<VoiceCloneResponseDTO> dtoList = new ArrayList<>(entityList.size());
 
+        // 获取用户名称ID集合
+        Set<Long> userIdList = entityList.stream().map(VoiceCloneEntity::getUserId).collect(Collectors.toSet());
+        List<SysUserEntity> userList = sysUserDao.selectList(new QueryWrapper<SysUserEntity>().in("id", userIdList));
+        Map<Long, String> userMap = userList.stream().collect(Collectors.toMap(SysUserEntity::getId, SysUserEntity::getUsername));
+
         // 转换每个实体为DTO
         for (VoiceCloneEntity entity : entityList) {
             VoiceCloneResponseDTO dto = ConvertUtils.sourceToTarget(entity, VoiceCloneResponseDTO.class);
@@ -198,7 +207,7 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
 
             // 设置用户名称
             if (entity.getUserId() != null) {
-                dto.setUserName(sysUserService.getByUserId(entity.getUserId()).getUsername());
+                dto.setUserName(userMap.get(entity.getUserId()));
             }
             
             // 确保trainStatus字段被正确设置，前端需要这个字段来判断是否为克隆音频

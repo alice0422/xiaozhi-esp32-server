@@ -33,7 +33,12 @@ class ASRProvider(ASRProviderBase):
         self.delete_audio_file = delete_audio_file
 
         # 火山引擎ASR配置
-        self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
+        enable_multilingual = config.get("enable_multilingual", False)
+        self.enable_multilingual = False if str(enable_multilingual).lower() == 'false' else True
+        if self.enable_multilingual:
+            self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
+        else:
+            self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         self.uid = config.get("uid", "streaming_asr_service")
         self.workflow = config.get(
             "workflow", "audio_in,resample,partition,vad,fe,decode,itn,nlu_punctuate"
@@ -42,7 +47,8 @@ class ASRProvider(ASRProviderBase):
         self.format = config.get("format", "pcm")
         self.codec = config.get("codec", "pcm")
         self.rate = config.get("sample_rate", 16000)
-        self.language = config.get("language", "zh-CN")
+        # language参数仅在多语种模式(bigmodel_nostream)下有效
+        self.language = config.get("language") if self.enable_multilingual else None
         self.bits = config.get("bits", 16)
         self.channel = config.get("channel", 1)
         self.auth_method = config.get("auth_method", "token")
@@ -175,7 +181,8 @@ class ASRProvider(ASRProviderBase):
                             utterances = payload["result"].get("utterances", [])
                             # 检查duration和空文本的情况
                             if (
-                                payload.get("audio_info", {}).get("duration", 0) > 2000
+                                not self.enable_multilingual # 注意：多语种模式不返回中间结果，需要等待最终结果
+                                and payload.get("audio_info", {}).get("duration", 0) > 2000
                                 and not utterances
                                 and not payload["result"].get("text")
                                 and conn.client_listen_mode != "manual"
@@ -189,6 +196,10 @@ class ASRProvider(ASRProviderBase):
 
                             # 专门处理没有文本的识别结果（手动模式下可能已经识别完成但是没松按键）
                             elif not payload["result"].get("text") and not utterances:
+                                # 多语种模式会持续返回空文本，直到最后返回完整结果，所以需要排除
+                                if self.enable_multilingual:
+                                    continue
+
                                 if conn.client_listen_mode == "manual" and conn.client_voice_stop and len(audio_data) > 0:
                                     logger.bind(tag=TAG).debug("消息结束收到停止信号，触发处理")
                                     await self.handle_voice_stop(conn, audio_data)
@@ -299,12 +310,16 @@ class ASRProvider(ASRProviderBase):
                 "format": self.format,
                 "codec": self.codec,
                 "rate": self.rate,
-                "language": self.language,
                 "bits": self.bits,
                 "channel": self.channel,
                 "sample_rate": self.rate,
             },
         }
+
+        # language参数仅在多语种模式下添加
+        if self.enable_multilingual and self.language:
+            req["audio"]["language"] = self.language
+
         logger.bind(tag=TAG).debug(
             f"构造请求参数: {json.dumps(req, ensure_ascii=False)}"
         )

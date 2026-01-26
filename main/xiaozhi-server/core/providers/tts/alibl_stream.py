@@ -185,20 +185,21 @@ class TTSProvider(TTSProviderBase):
             # 过滤Markdown
             filtered_text = MarkdownCleaner.clean_markdown(text)
 
-            # 发送continue-task消息
-            continue_task_message = {
-                "header": {
-                    "action": "continue-task",
-                    "task_id": self.conn.sentence_id,
-                    "streaming": "duplex",
-                },
-                "payload": {"input": {"text": filtered_text}},
-            }
+            if filtered_text:
+                # 发送continue-task消息
+                continue_task_message = {
+                    "header": {
+                        "action": "continue-task",
+                        "task_id": self.conn.sentence_id,
+                        "streaming": "duplex",
+                    },
+                    "payload": {"input": {"text": filtered_text}},
+                }
 
-            await self.ws.send(json.dumps(continue_task_message))
-            self.last_active_time = time.time()
-            logger.bind(tag=TAG).debug(f"已发送文本: {filtered_text}")
-
+                await self.ws.send(json.dumps(continue_task_message))
+                self.last_active_time = time.time()
+                logger.bind(tag=TAG).debug(f"已发送文本: {filtered_text}")
+            return
         except Exception as e:
             logger.bind(tag=TAG).error(f"发送TTS文本失败: {str(e)}")
             if self.ws:

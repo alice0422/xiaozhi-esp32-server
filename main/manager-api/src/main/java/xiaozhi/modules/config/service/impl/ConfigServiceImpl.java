@@ -163,11 +163,11 @@ public class ConfigServiceImpl implements ConfigService {
         }
         result.put("chat_history_conf", chatHistoryConf);
         // 如果客户端已实例化模型，则不返回
-        String alreadySelectedVadModelId = (String) selectedModule.get("VAD");
+        String alreadySelectedVadModelId = selectedModule.get("VAD");
         if (alreadySelectedVadModelId != null && alreadySelectedVadModelId.equals(agent.getVadModelId())) {
             agent.setVadModelId(null);
         }
-        String alreadySelectedAsrModelId = (String) selectedModule.get("ASR");
+        String alreadySelectedAsrModelId = selectedModule.get("ASR");
         if (alreadySelectedAsrModelId != null && alreadySelectedAsrModelId.equals(agent.getAsrModelId())) {
             agent.setAsrModelId(null);
         }
@@ -302,7 +302,7 @@ public class ConfigServiceImpl implements ConfigService {
     private void buildVoiceprintConfig(String agentId, Map<String, Object> result) {
         try {
             // 获取声纹接口地址
-            String voiceprintUrl = sysParamsService.getValue("server.voice_print", true);
+            String voiceprintUrl = sysParamsService.getValue(Constant.SERVER_VOICE_PRINT, true);
             if (StringUtils.isBlank(voiceprintUrl) || "null".equals(voiceprintUrl)) {
                 return;
             }

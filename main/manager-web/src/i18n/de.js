@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': 'Systemfunktionsverwaltung',
   'header.changePassword': 'Passwort ändern',
   'header.logout': 'Abmelden',
-  'header.searchPlaceholder': 'Nach Namen suchen..',
+  'header.searchPlaceholder': 'Namen oder MAC suchen',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Werkzeugaufruf',
@@ -448,6 +448,7 @@ export default {
   'device.bindWithCode': '6-stelliger Bestätigungscode-Bindung',
   'device.manualAdd': 'Manuell hinzufügen',
   'device.unbind': 'Bindung aufheben',
+  'device.deviceThemeGeneration': 'Gerätethema erstellen',
   'device.toolCall': 'Werkzeugaufruf',
   'device.selectAtLeastOne': 'Bitte wählen Sie mindestens einen Datensatz aus',
   'device.confirmBatchUnbind': 'Sind Sie sicher, dass Sie {count} ausgewählte Geräte entbinden möchten?',
@@ -779,6 +780,16 @@ export default {
   'roleConfig.fetchConfigFailed': 'Konfiguration konnte nicht abgerufen werden',
   'roleConfig.fetchModelsFailed': 'Modellliste konnte nicht abgerufen werden',
   'roleConfig.fetchPluginsFailed': 'Plugin-Liste konnte nicht abgerufen werden',
+  'roleConfig.cannotResumeAudio': 'Audio-Wiedergabe kann nicht fortgesetzt werden',
+  'roleConfig.selectVoiceFirst': 'Bitte wählen Sie zuerst eine Stimme aus',
+  'roleConfig.audioLoadTimeout': 'Audio-Laden dauert zu lange, bitte versuchen Sie es später erneut',
+  'roleConfig.cloneAudioPlayFailed': 'Klon-Audio-Wiedergabe fehlgeschlagen',
+  'roleConfig.cannotPlayCloneAudio': 'Klon-Audio kann nicht abgespielt werden',
+  'roleConfig.getCloneAudioFailed': 'Klon-Audio konnte nicht abgerufen werden',
+  'roleConfig.noPreviewAudio': 'Diese Stimme hat keine Vorschau-Audio-Datei',
+  'roleConfig.audioPlayFailed': 'Audio-Wiedergabe fehlgeschlagen',
+  'roleConfig.cannotPlayAudio': 'Audio kann nicht abgespielt werden',
+  'roleConfig.audioPlayError': 'Fehler bei der Audio-Wiedergabe',
 
   // Function management dialog text
   'functionDialog.title': 'Funktionsverwaltung',
@@ -919,6 +930,10 @@ export default {
   'ttsModel.selectVoiceToDelete': 'Bitte wählen Sie Stimmen zum Löschen aus',
   'ttsModel.warning': 'Warnung',
   'ttsModel.confirmDeleteVoice': 'Sind Sie sicher, dass Sie {count} Stimmen löschen möchten?',
+  'ttsModel.voiceCodeNameLanguageRequired': 'Stimmcode, Stimmaname und Sprache können nicht leer sein',
+  'ttsModel.deleteCancelled': 'Löschvorgang abgebrochen',
+  'ttsModel.updateSuccess': 'Aktualisierung erfolgreich',
+  'ttsModel.saveSuccess': 'Speicherung erfolgreich',
 
   // OTA Management Page Text
   'otaManagement.firmwareManagement': 'Firmware-Verwaltung',
@@ -1110,7 +1125,7 @@ export default {
   'voiceClone.training': 'Training',
   'voiceClone.trainSuccess': 'Training erfolgreich',
   'voiceClone.trainFailed': 'Training fehlgeschlagen',
-  'voiceClone.itemsPerPage': '{items} Einträge pro Seite',
+  'voiceClone.itemsPerPage': '{items} Einträge/Seite',
   'voiceClone.firstPage': 'Erste Seite',
   'voiceClone.prevPage': 'Vorherige Seite',
   'voiceClone.nextPage': 'Nächste Seite',

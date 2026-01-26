@@ -5,12 +5,12 @@
         <div style="
             display: flex;
             align-items: center;
-            margin-top: 15px;
-            margin-left: 10px;
+            margin-top: 11px;
+            margin-left: 11px;
             gap: 10px;
           ">
-          <img loading="lazy" alt="" src="@/assets/xiaozhi-logo.png" style="width: 45px; height: 45px" />
-          <img loading="lazy" alt="" :src="xiaozhiAiIcon" style="height: 18px" />
+          <img loading="lazy" alt="" src="@/assets/xiaozhi-logo.png" style="width: 42px; height: 42px" />
+          <img loading="lazy" alt="" :src="xiaozhiAiIcon" style="height: 20px" />
         </div>
       </el-header>
       <div class="login-person">

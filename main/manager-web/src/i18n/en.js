@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': 'System Feature Management',
   'header.changePassword': 'Change Password',
   'header.logout': 'Logout',
-  'header.searchPlaceholder': 'Search by name..',
+  'header.searchPlaceholder': 'Search name or mac',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Tool Call',
@@ -448,6 +448,7 @@ export default {
   'device.bindWithCode': '6-digit Verification Code Binding',
   'device.manualAdd': 'Manual Add',
   'device.unbind': 'Unbind',
+  'device.deviceThemeGeneration': 'Device theme generation',
   'device.toolCall': 'Tool Call',
   'device.selectAtLeastOne': 'Please select at least one record',
   'device.confirmBatchUnbind': 'Are you sure you want to unbind {count} selected devices?',
@@ -779,6 +780,16 @@ export default {
   'roleConfig.fetchConfigFailed': 'Failed to fetch configuration',
   'roleConfig.fetchModelsFailed': 'Failed to fetch model list',
   'roleConfig.fetchPluginsFailed': 'Failed to fetch plugin list',
+  'roleConfig.cannotResumeAudio': 'Cannot resume audio playback',
+  'roleConfig.selectVoiceFirst': 'Please select a voice first',
+  'roleConfig.audioLoadTimeout': 'Audio loading takes too long, please try again later',
+  'roleConfig.cloneAudioPlayFailed': 'Clone audio playback failed',
+  'roleConfig.cannotPlayCloneAudio': 'Cannot play clone audio',
+  'roleConfig.getCloneAudioFailed': 'Failed to get clone audio',
+  'roleConfig.noPreviewAudio': 'This voice has no preview audio available',
+  'roleConfig.audioPlayFailed': 'Audio playback failed',
+  'roleConfig.cannotPlayAudio': 'Cannot play audio',
+  'roleConfig.audioPlayError': 'Error occurred during audio playback',
 
   // Function management dialog text
   'functionDialog.title': 'Function Management',
@@ -919,6 +930,10 @@ export default {
   'ttsModel.selectVoiceToDelete': 'Please select voices to delete',
   'ttsModel.warning': 'Warning',
   'ttsModel.confirmDeleteVoice': 'Are you sure to delete {count} voices?',
+  'ttsModel.voiceCodeNameLanguageRequired': 'Voice code, voice name and language type cannot be empty',
+  'ttsModel.deleteCancelled': 'Deletion cancelled',
+  'ttsModel.updateSuccess': 'Update successful',
+  'ttsModel.saveSuccess': 'Save successful',
 
   // OTA Management Page Text
   'otaManagement.firmwareManagement': 'Firmware Management',
@@ -1110,7 +1125,7 @@ export default {
   'voiceClone.training': 'Training',
   'voiceClone.trainSuccess': 'Training successful',
   'voiceClone.trainFailed': 'Training failed',
-  'voiceClone.itemsPerPage': '{items} items per page',
+  'voiceClone.itemsPerPage': '{items} items/page',
   'voiceClone.firstPage': 'First Page',
   'voiceClone.prevPage': 'Previous Page',
   'voiceClone.nextPage': 'Next Page',

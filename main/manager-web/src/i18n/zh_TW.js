@@ -25,7 +25,7 @@ export default {
   'header.featureManagement': '系統功能配置',
   'header.changePassword': '修改密碼',
   'header.logout': '退出登錄',
-  'header.searchPlaceholder': '輸入名稱搜索..',
+  'header.searchPlaceholder': '輸入名稱或mac搜索',
 
   // McpToolCallDialog组件文本
   'mcpToolCall.title': '工具調用',
@@ -448,6 +448,7 @@ export default {
   'device.bindWithCode': '6位驗證碼綁定',
   'device.manualAdd': '手動添加',
   'device.unbind': '解綁',
+  'device.deviceThemeGeneration': '設備主題生成',
   'device.toolCall': '工具調用',
   'device.selectAtLeastOne': '請至少選擇一條記錄',
   'device.confirmBatchUnbind': '確認要解綁選中的 {count} 台設備嗎？',
@@ -779,6 +780,16 @@ export default {
   'roleConfig.fetchConfigFailed': '獲取配置失敗',
   'roleConfig.fetchModelsFailed': '獲取模型列表失敗',
   'roleConfig.fetchPluginsFailed': '獲取插件列表失敗',
+  'roleConfig.cannotResumeAudio': '無法恢復播放音訊',
+  'roleConfig.selectVoiceFirst': '請先選擇一個音色',
+  'roleConfig.audioLoadTimeout': '音訊載入時間較長，請稍後重試',
+  'roleConfig.cloneAudioPlayFailed': '克隆音訊播放失敗',
+  'roleConfig.cannotPlayCloneAudio': '無法播放克隆音訊',
+  'roleConfig.getCloneAudioFailed': '獲取克隆音訊失敗',
+  'roleConfig.noPreviewAudio': '該音色暫無可預覽的音訊',
+  'roleConfig.audioPlayFailed': '音訊播放失敗',
+  'roleConfig.cannotPlayAudio': '無法播放音訊',
+  'roleConfig.audioPlayError': '播放音訊過程出錯',
 
   // 功能管理對話框文本
   'functionDialog.title': '功能管理',
@@ -917,6 +928,10 @@ export default {
   'ttsModel.selectVoiceToDelete': '請選擇要刪除的音色',
   'ttsModel.warning': '警告',
   'ttsModel.confirmDeleteVoice': '確定要刪除{count}個音色嗎？',
+  'ttsModel.voiceCodeNameLanguageRequired': '音色編碼、音色名稱和語言類型不能為空',
+  'ttsModel.deleteCancelled': '刪除已取消',
+  'ttsModel.updateSuccess': '更新成功',
+  'ttsModel.saveSuccess': '保存成功',
   'ttsModel.operationFailed': '操作失敗',
   'ttsModel.operationClosed': '操作已關閉',
 
@@ -1110,7 +1125,7 @@ export default {
   'voiceClone.training': '訓練中',
   'voiceClone.trainSuccess': '訓練成功',
   'voiceClone.trainFailed': '訓練失敗',
-  'voiceClone.itemsPerPage': '每頁 {items} 條',
+  'voiceClone.itemsPerPage': '{items}條/頁',
   'voiceClone.firstPage': '首頁',
   'voiceClone.prevPage': '上一頁',
   'voiceClone.nextPage': '下一頁',

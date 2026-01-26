@@ -118,23 +118,45 @@ class ASRProviderBase(ABC):
             else:
                 speaker_name = voiceprint_result
 
-            if raw_text:
-                logger.bind(tag=TAG).info(f"识别文本: {raw_text}")
-            if speaker_name:
-                logger.bind(tag=TAG).info(f"识别说话人: {speaker_name}")
+            # 判断 ASR 结果类型
+            if isinstance(raw_text, dict):
+                # FunASR 返回的 dict 格式
+                if speaker_name:
+                    raw_text["speaker"] = speaker_name
+
+                # 记录识别结果
+                if raw_text.get("language"):
+                    logger.bind(tag=TAG).info(f"识别语言: {raw_text['language']}")
+                if raw_text.get("emotion"):
+                    logger.bind(tag=TAG).info(f"识别情绪: {raw_text['emotion']}")
+                if raw_text.get("content"):
+                    logger.bind(tag=TAG).info(f"识别文本: {raw_text['content']}")
+                if speaker_name:
+                    logger.bind(tag=TAG).info(f"识别说话人: {speaker_name}")
+
+                # 转换为 JSON 字符串用于下游
+                enhanced_text = json.dumps(raw_text, ensure_ascii=False)
+                content_for_length_check = raw_text.get("content", "")
+            else:
+                # 其他 ASR 返回的纯文本
+                if raw_text:
+                    logger.bind(tag=TAG).info(f"识别文本: {raw_text}")
+                if speaker_name:
+                    logger.bind(tag=TAG).info(f"识别说话人: {speaker_name}")
+
+                # 构建包含说话人信息的JSON字符串
+                enhanced_text = self._build_enhanced_text(raw_text, speaker_name)
+                content_for_length_check = raw_text
 
             # 性能监控
             total_time = time.monotonic() - total_start_time
             logger.bind(tag=TAG).debug(f"总处理耗时: {total_time:.3f}s")
 
             # 检查文本长度
-            text_len, _ = remove_punctuation_and_length(raw_text)
+            text_len, _ = remove_punctuation_and_length(content_for_length_check)
             self.stop_ws_connection()
 
             if text_len > 0:
-                # 构建包含说话人信息的JSON字符串
-                enhanced_text = self._build_enhanced_text(raw_text, speaker_name)
-
                 # 使用自定义模块进行上报
                 await startToChat(conn, enhanced_text)
                 enqueue_asr_report(conn, enhanced_text, asr_audio_task)
@@ -145,7 +167,7 @@ class ASRProviderBase(ABC):
             logger.bind(tag=TAG).debug(f"异常详情: {traceback.format_exc()}")
 
     def _build_enhanced_text(self, text: str, speaker_name: Optional[str]) -> str:
-        """构建包含说话人信息的文本"""
+        """构建包含说话人信息的文本（仅用于纯文本ASR）"""
         if speaker_name and speaker_name.strip():
             return json.dumps({
                 "speaker": speaker_name,

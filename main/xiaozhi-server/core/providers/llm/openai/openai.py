@@ -77,6 +77,15 @@ class LLMProvider(LLMProviderBase):
                 if value is not None:
                     request_params[key] = value
 
+            # 如果是智谱 GLM 模型，关闭思考模式
+            if "glm" in self.model_name.lower():
+                request_params["extra_body"] = {
+                    "thinking": {
+                        "type": "disabled"  # 关闭思考模式
+                    }
+                }
+                logger.bind(tag=TAG).info(f"检测到 GLM 模型，已关闭思考模式")
+
             responses = self.client.chat.completions.create(**request_params)
 
             is_active = True

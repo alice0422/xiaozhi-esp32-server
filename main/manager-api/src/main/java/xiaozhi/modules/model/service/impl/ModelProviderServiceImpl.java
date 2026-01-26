@@ -124,12 +124,6 @@ public class ModelProviderServiceImpl extends BaseServiceImpl<ModelProviderDao, 
         return getPageData(modelProviderDao.selectPage(pageParam, wrapper), ModelProviderDTO.class);
     }
 
-    public static void main(String[] args) {
-        String jsonString = "\"[]\"";
-        JSONArray jsonArray = new JSONArray(jsonString);
-        System.out.println("字符串转 JSONArray: " + jsonArray.toString());
-    }
-
     @Override
     public ModelProviderDTO add(ModelProviderDTO modelProviderDTO) {
         UserDetail user = SecurityUser.getUser();
@@ -153,8 +147,7 @@ public class ModelProviderServiceImpl extends BaseServiceImpl<ModelProviderDao, 
         UserDetail user = SecurityUser.getUser();
         modelProviderDTO.setUpdater(user.getId());
         modelProviderDTO.setUpdateDate(new Date());
-        if (modelProviderDao
-                .updateById(ConvertUtils.sourceToTarget(modelProviderDTO, ModelProviderEntity.class)) == 0) {
+        if (modelProviderDao.updateById(ConvertUtils.sourceToTarget(modelProviderDTO, ModelProviderEntity.class)) == 0) {
             throw new RenException(ErrorCode.UPDATE_DATA_FAILED);
         }
         return ConvertUtils.sourceToTarget(modelProviderDTO, ModelProviderDTO.class);

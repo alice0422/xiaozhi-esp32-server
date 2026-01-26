@@ -49,15 +49,15 @@
               <span v-else>{{ scope.row.remark }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="showReferenceColumns" :label="$t('ttsModel.cloneAudioPath')" align="center">
+          <el-table-column v-if="showReferenceColumns" :label="$t('ttsModel.referenceAudioPath')" align="center">
             <template slot-scope="scope">
-              <el-input v-if="scope.row.editing" v-model="scope.row.referenceAudio" :placeholder="$t('ttsModel.enterCloneAudioPath')"></el-input>
+              <el-input v-if="scope.row.editing" v-model="scope.row.referenceAudio" :placeholder="$t('ttsModel.enterReferenceAudio')"></el-input>
               <span v-else>{{ scope.row.referenceAudio }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="showReferenceColumns" :label="$t('ttsModel.cloneAudioText')" align="center">
+          <el-table-column v-if="showReferenceColumns" :label="$t('ttsModel.referenceText')" align="center">
             <template slot-scope="scope">
-              <el-input v-if="scope.row.editing" v-model="scope.row.referenceText" :placeholder="$t('ttsModel.enterCloneAudioText')"></el-input>
+              <el-input v-if="scope.row.editing" v-model="scope.row.referenceText" :placeholder="$t('ttsModel.enterReferenceText')"></el-input>
               <span v-else>{{ scope.row.referenceText }}</span>
             </template>
           </el-table-column>

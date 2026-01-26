@@ -48,17 +48,6 @@ public interface KnowledgeFilesService {
                         Map<String, Object> parserConfig);
 
         /**
-         * 根据状态分页查询文档列表
-         * 
-         * @param datasetId 知识库ID
-         * @param status    文档解析状态（0-未开始，1-进行中，2-已取消，3-已完成，4-失败）
-         * @param page      页码
-         * @param limit     每页数量
-         * @return 分页数据
-         */
-        PageData<KnowledgeFilesDTO> getPageListByStatus(String datasetId, Integer status, Integer page, Integer limit);
-
-        /**
          * 根据文档ID和知识库ID删除文档
          * 
          * @param documentId 文档ID

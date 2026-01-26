@@ -1,21 +1,12 @@
 package xiaozhi.modules.knowledge.service.impl;
 
-import java.io.IOException;
 import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -32,6 +23,7 @@ import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.MessageUtils;
+import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.knowledge.dao.KnowledgeBaseDao;
 import xiaozhi.modules.knowledge.dto.KnowledgeBaseDTO;
 import xiaozhi.modules.knowledge.entity.KnowledgeBaseEntity;
@@ -53,8 +45,6 @@ public class KnowledgeBaseServiceImpl extends BaseServiceImpl<KnowledgeBaseDao, 
     private final ModelConfigService modelConfigService;
     private final ModelConfigDao modelConfigDao;
     private final RedisUtils redisUtils;
-    private RestTemplate restTemplate = new RestTemplate();
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public KnowledgeBaseEntity selectById(Serializable datasetId) {
@@ -269,6 +259,26 @@ public class KnowledgeBaseServiceImpl extends BaseServiceImpl<KnowledgeBaseDao, 
         return ConvertUtils.sourceToTarget(entity, KnowledgeBaseDTO.class);
     }
 
+    /**
+     * 根据知识库ID集合查询知识库
+     * @param datasetIdList 知识库ID集合
+     * @return
+     */
+    @Override
+    public List<KnowledgeBaseDTO> getByDatasetIdList(List<String> datasetIdList) {
+        //判断参数
+        if (ToolUtil.isEmpty(datasetIdList)) {
+            throw new RenException(ErrorCode.PARAMS_GET_ERROR);
+        }
+        //批量查询
+        List<KnowledgeBaseEntity> entityList = knowledgeBaseDao.selectList(
+                new QueryWrapper<KnowledgeBaseEntity>().in("dataset_id", datasetIdList));
+        if (ToolUtil.isEmpty(entityList)) {
+            throw new RenException(ErrorCode.Knowledge_Base_RECORD_NOT_EXISTS);
+        }
+        return ConvertUtils.sourceToTarget(entityList, KnowledgeBaseDTO.class);
+    }
+
     @Override
     public void deleteByDatasetId(String datasetId) {
         if (StringUtils.isBlank(datasetId)) {
@@ -380,24 +390,17 @@ public class KnowledgeBaseServiceImpl extends BaseServiceImpl<KnowledgeBaseDao, 
     }
 
     @Override
-    public List<Map<String, Object>> getRAGModels() {
+    public List<ModelConfigEntity> getRAGModels() {
         // 查询RAG类型的模型配置
-        QueryWrapper<ModelConfigEntity> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("model_type", Constant.RAG_CONFIG_TYPE)
+        QueryWrapper<ModelConfigEntity> queryWrapper = new QueryWrapper<ModelConfigEntity>()
+                .select("id", "model_name")
+                .eq("model_type", Constant.RAG_CONFIG_TYPE)
                 .eq("is_enabled", 1)
                 .orderByDesc("is_default")
                 .orderByDesc("create_date");
 
         List<ModelConfigEntity> modelConfigs = modelConfigDao.selectList(queryWrapper);
-
-        List<Map<String, Object>> modelList = new ArrayList<>();
-        for (ModelConfigEntity modelConfig : modelConfigs) {
-            Map<String, Object> modelInfo = new HashMap<>();
-            modelInfo.put("id", modelConfig.getId());
-            modelInfo.put("modelName", modelConfig.getModelName());
-            modelList.add(modelInfo);
-        }
-        return modelList;
+        return modelConfigs;
     }
 
     /**

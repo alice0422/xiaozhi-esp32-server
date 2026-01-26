@@ -382,4 +382,20 @@ export default {
                 });
             }).send();
     },
+    
+    // 搜索智能体
+    searchAgent(keyword, searchType, callback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/list?keyword=${encodeURIComponent(keyword)}&searchType=${searchType}`)
+            .method('GET')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            })
+            .networkFail(() => {
+                RequestService.reAjaxFun(() => {
+                    this.searchAgent(keyword, searchType, callback);
+                });
+            }).send();
+    },
 }

@@ -63,16 +63,11 @@ public class KnowledgeFilesController {
         // 验证知识库权限
         validateKnowledgeBasePermission(datasetId);
 
-        // 如果指定了状态参数，使用状态查询接口
-        if (status != null) {
-            PageData<KnowledgeFilesDTO> pageData = knowledgeFilesService.getPageListByStatus(datasetId, status, page, page_size);
-            return new Result<PageData<KnowledgeFilesDTO>>().ok(pageData);
-        }
-
-        // 否则使用通用查询接口
+        //组装参数
         KnowledgeFilesDTO knowledgeFilesDTO = new KnowledgeFilesDTO();
         knowledgeFilesDTO.setDatasetId(datasetId);
         knowledgeFilesDTO.setName(name);
+        knowledgeFilesDTO.setStatus(status);
         PageData<KnowledgeFilesDTO> pageData = knowledgeFilesService.getPageList(knowledgeFilesDTO, page, page_size);
         return new Result<PageData<KnowledgeFilesDTO>>().ok(pageData);
     }
@@ -87,8 +82,11 @@ public class KnowledgeFilesController {
             @RequestParam(required = false, defaultValue = "10") Integer page_size) {
         // 验证知识库权限
         validateKnowledgeBasePermission(datasetId);
-
-        PageData<KnowledgeFilesDTO> pageData = knowledgeFilesService.getPageListByStatus(datasetId, status, page, page_size);
+        //组装参数
+        KnowledgeFilesDTO knowledgeFilesDTO = new KnowledgeFilesDTO();
+        knowledgeFilesDTO.setDatasetId(datasetId);
+        knowledgeFilesDTO.setStatus(status);
+        PageData<KnowledgeFilesDTO> pageData = knowledgeFilesService.getPageList(knowledgeFilesDTO, page, page_size);
         return new Result<PageData<KnowledgeFilesDTO>>().ok(pageData);
     }
 
@@ -159,8 +157,7 @@ public class KnowledgeFilesController {
         // 验证知识库权限
         validateKnowledgeBasePermission(datasetId);
 
-        Map<String, Object> result = knowledgeFilesService.listChunks(datasetId, documentId, keywords, page, page_size,
-                id);
+        Map<String, Object> result = knowledgeFilesService.listChunks(datasetId, documentId, keywords, page, page_size, id);
         return new Result<Map<String, Object>>().ok(result);
     }
 

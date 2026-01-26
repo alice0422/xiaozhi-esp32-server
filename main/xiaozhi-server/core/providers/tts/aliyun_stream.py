@@ -288,18 +288,19 @@ class TTSProvider(TTSProviderBase):
                 logger.bind(tag=TAG).warning(f"WebSocket连接不存在，终止发送文本")
                 return
             filtered_text = MarkdownCleaner.clean_markdown(text)
-            run_request = {
-                "header": {
-                    "message_id": uuid.uuid4().hex,
-                    "task_id": self.task_id,
-                    "namespace": "FlowingSpeechSynthesizer",
-                    "name": "RunSynthesis",
-                    "appkey": self.appkey,
-                },
-                "payload": {"text": filtered_text},
-            }
-            await self.ws.send(json.dumps(run_request))
-            self.last_active_time = time.time()
+            if filtered_text:
+                run_request = {
+                    "header": {
+                        "message_id": uuid.uuid4().hex,
+                        "task_id": self.task_id,
+                        "namespace": "FlowingSpeechSynthesizer",
+                        "name": "RunSynthesis",
+                        "appkey": self.appkey,
+                    },
+                    "payload": {"text": filtered_text},
+                }
+                await self.ws.send(json.dumps(run_request))
+                self.last_active_time = time.time()
             return
 
         except Exception as e:

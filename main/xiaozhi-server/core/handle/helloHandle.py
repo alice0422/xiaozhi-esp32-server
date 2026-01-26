@@ -1,5 +1,6 @@
 import time
 import json
+import uuid
 import random
 import asyncio
 from core.utils.dialogue import Message
@@ -10,8 +11,7 @@ from core.handle.sendAudioHandle import sendAudioMessage, send_tts_message
 from core.utils.util import remove_punctuation_and_length, opus_datas_to_wav_bytes
 from core.providers.tools.device_mcp import (
     MCPClient,
-    send_mcp_initialize_message,
-    send_mcp_tools_list_request,
+    send_mcp_initialize_message
 )
 
 TAG = __name__
@@ -55,8 +55,6 @@ async def handleHelloMessage(conn, msg_json):
             conn.mcp_client = MCPClient()
             # 发送初始化
             asyncio.create_task(send_mcp_initialize_message(conn))
-            # 发送mcp消息，获取tools列表
-            asyncio.create_task(send_mcp_tools_list_request(conn))
 
     await conn.websocket.send(json.dumps(conn.welcome_msg))
 
@@ -104,6 +102,9 @@ async def checkWakeupWords(conn, text):
     opus_packets = await audio_to_data(response.get("file_path"), use_cache=False)
     # 播放唤醒词回复
     conn.client_abort = False
+
+    # 将唤醒词回复视为新会话，生成新的 sentence_id，确保流控器重置
+    conn.sentence_id = str(uuid.uuid4().hex)
 
     conn.logger.bind(tag=TAG).info(f"播放唤醒词回复: {response.get('text')}")
     await sendAudioMessage(conn, SentenceType.FIRST, opus_packets, response.get("text"))

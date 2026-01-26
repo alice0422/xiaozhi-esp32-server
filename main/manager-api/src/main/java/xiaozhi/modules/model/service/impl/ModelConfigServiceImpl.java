@@ -56,7 +56,7 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
                 new QueryWrapper<ModelConfigEntity>()
                         .eq("model_type", modelType)
                         .eq("is_enabled", 1)
-                        .like(StringUtils.isNotBlank(modelName), "model_name", "%" + modelName + "%")
+                        .like(StringUtils.isNotBlank(modelName), "model_name", modelName)
                         .select("id", "model_name"));
         return ConvertUtils.sourceToTarget(entities, ModelBasicInfoDTO.class);
     }
@@ -67,14 +67,14 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
                 new QueryWrapper<ModelConfigEntity>()
                         .eq("model_type", "llm")
                         .eq("is_enabled", 1)
-                        .like(StringUtils.isNotBlank(modelName), "model_name", "%" + modelName + "%")
+                        .like(StringUtils.isNotBlank(modelName), "model_name", modelName)
                         .select("id", "model_name", "config_json"));
 
         return entities.stream().map(item -> {
             LlmModelBasicInfoDTO dto = new LlmModelBasicInfoDTO();
             dto.setId(item.getId());
             dto.setModelName(item.getModelName());
-            String type = item.getConfigJson().get("type").toString();
+            String type = item.getConfigJson().getOrDefault("type", "").toString();
             dto.setType(type);
             return dto;
         }).toList();
@@ -91,14 +91,13 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
         Page<ModelConfigEntity> pageInfo = new Page<>(curPage, pageSize);
 
         // 添加排序规则：先按is_enabled降序，再按sort升序
-        pageInfo.addOrder(OrderItem.desc("is_enabled"));
-        pageInfo.addOrder(OrderItem.asc("sort"));
+        pageInfo.addOrder(OrderItem.desc("is_enabled"), OrderItem.asc("sort"));
 
         IPage<ModelConfigEntity> modelConfigEntityIPage = modelConfigDao.selectPage(
                 pageInfo,
                 new QueryWrapper<ModelConfigEntity>()
                         .eq("model_type", modelType)
-                        .like(StringUtils.isNotBlank(modelName), "model_name", "%" + modelName + "%"));
+                        .like(StringUtils.isNotBlank(modelName), "model_name", modelName));
 
         return getPageData(modelConfigEntityIPage, ModelConfigDTO.class);
     }
@@ -346,6 +345,7 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
         modelConfigEntity.setModelName(modelConfigBodyDTO.getModelName());
         modelConfigEntity.setSort(modelConfigBodyDTO.getSort());
         modelConfigEntity.setIsEnabled(modelConfigBodyDTO.getIsEnabled());
+        modelConfigEntity.setRemark(modelConfigBodyDTO.getRemark());
         // 3. 处理配置JSON，仅更新非敏感字段和明确修改的敏感字段
         if (modelConfigBodyDTO.getConfigJson() != null && originalEntity.getConfigJson() != null) {
             JSONObject originalJson = originalEntity.getConfigJson();
@@ -488,7 +488,7 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
             List<ModelConfigEntity> intentConfigs = modelConfigDao.selectList(
                     new QueryWrapper<ModelConfigEntity>()
                             .eq("model_type", "Intent")
-                            .like("config_json", "%" + modelId + "%"));
+                            .like("config_json", modelId));
             if (!intentConfigs.isEmpty()) {
                 throw new RenException(ErrorCode.LLM_REFERENCED_BY_INTENT);
             }

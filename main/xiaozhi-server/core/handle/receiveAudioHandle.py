@@ -40,6 +40,7 @@ async def resume_vad_detection(conn):
 async def startToChat(conn, text):
     # 检查输入是否是JSON格式（包含说话人信息）
     speaker_name = None
+    language_tag = None
     actual_text = text
 
     try:
@@ -48,6 +49,7 @@ async def startToChat(conn, text):
             data = json.loads(text)
             if "speaker" in data and "content" in data:
                 speaker_name = data["speaker"]
+                language_tag = data["language"]
                 actual_text = data["content"]
                 conn.logger.bind(tag=TAG).info(f"解析到说话人信息: {speaker_name}")
 
@@ -62,6 +64,11 @@ async def startToChat(conn, text):
         conn.current_speaker = speaker_name
     else:
         conn.current_speaker = None
+    # 保存语种信息到连接对象
+    if language_tag:
+        conn.current_language_tag = language_tag
+    else:
+        conn.current_language_tag = "zh"
 
     if conn.need_bind:
         await check_bind_device(conn)

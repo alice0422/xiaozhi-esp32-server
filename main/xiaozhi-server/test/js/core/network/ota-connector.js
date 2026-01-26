@@ -1,4 +1,3 @@
-import { otaStatusStyle } from '../../ui/dom-helper.js';
 import { log } from '../../utils/logger.js';
 
 // WebSocket 连接
@@ -62,18 +61,6 @@ function validateConfig(config) {
     return true;
 }
 
-// 判断wsUrl路径是否存在错误
-function validateWsUrl(wsUrl) {
-    if (wsUrl === '') return false;
-    // 检查URL格式
-    if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
-        log('URL格式错误，必须以ws://或wss://开头', 'error');
-        return false;
-    }
-    return true
-}
-
-
 // OTA发送请求，验证状态，并返回响应数据
 async function sendOTA(otaUrl, config) {
     try {
@@ -96,7 +83,7 @@ async function sendOTA(otaUrl, config) {
                 },
                 ota: { label: 'xiaozhi-web-test' },
                 board: {
-                    type: 'xiaozhi-web-test',
+                    type: config.deviceName,
                     ssid: 'xiaozhi-web-test',
                     rssi: 0,
                     channel: 0,
@@ -115,10 +102,8 @@ async function sendOTA(otaUrl, config) {
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
         const result = await res.json();
-        otaStatusStyle(true)
         return result; // 返回完整的响应数据
     } catch (err) {
-        otaStatusStyle(false)
         return null; // 失败返回null
     }
 }

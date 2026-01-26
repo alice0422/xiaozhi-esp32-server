@@ -73,9 +73,13 @@ public class AgentController {
     @GetMapping("/list")
     @Operation(summary = "获取用户智能体列表")
     @RequiresPermissions("sys:role:normal")
-    public Result<List<AgentDTO>> getUserAgents() {
+    public Result<List<AgentDTO>> getUserAgents(
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "searchType", defaultValue = "name") String searchType) {
         UserDetail user = SecurityUser.getUser();
-        List<AgentDTO> agents = agentService.getUserAgents(user.getId());
+        
+        // 直接调用整合后的getUserAgents方法，无需再区分搜索和普通查询
+        List<AgentDTO> agents = agentService.getUserAgents(user.getId(), keyword, searchType);
         return new Result<List<AgentDTO>>().ok(agents);
     }
 
@@ -270,5 +274,7 @@ public class AgentController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"play.wav\"")
                 .body(audioData);
     }
+
+
 
 }

@@ -1,8 +1,10 @@
 import os
 import re
 import sys
-from config.logger import setup_logging
 import importlib
+
+from config.logger import setup_logging
+from core.utils.textUtils import check_emoji
 
 logger = setup_logging()
 
@@ -135,4 +137,8 @@ class MarkdownCleaner:
 
         for regex, replacement in MarkdownCleaner.REGEXES:
             text = regex.sub(replacement, text)
+
+        # 去除emoji表情
+        text = check_emoji(text)
+
         return text.strip()

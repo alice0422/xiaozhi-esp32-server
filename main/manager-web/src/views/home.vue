@@ -119,26 +119,32 @@ export default {
     handleDeviceManage() {
       this.$router.push('/device-management');
     },
-    handleSearch(regex) {
+    handleSearch(keyword) {
       this.isSearching = true;
-      this.searchRegex = regex;
-      this.applySearchFilter();
+      this.isLoading = true;
+      // 检测MAC地址格式：包含4个冒号
+      const isMac = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(keyword)
+      const searchType = isMac ? 'mac' : 'name';
+      Api.agent.searchAgent(keyword, searchType, ({ data }) => {
+        if (data?.data) {
+          this.devices = data.data.map(item => ({
+            ...item,
+            agentId: item.id
+          }));
+        }
+        this.isLoading = false;
+      }, (error) => {
+        console.error('搜索智能体失败:', error);
+        this.isLoading = false;
+        this.$message.error(this.$t('message.searchFailed'));
+      });
     },
     handleSearchReset() {
       this.isSearching = false;
-      this.searchRegex = null;
+      // 直接将原始设备列表赋值给显示设备列表，避免重新加载数据
       this.devices = [...this.originalDevices];
     },
-    applySearchFilter() {
-      if (!this.isSearching || !this.searchRegex) {
-        this.devices = [...this.originalDevices];
-        return;
-      }
 
-      this.devices = this.originalDevices.filter(device => {
-        return this.searchRegex.test(device.agentName);
-      });
-    },
     // 搜索更新智能体列表
     handleSearchResult(filteredList) {
       this.devices = filteredList; // 更新设备列表

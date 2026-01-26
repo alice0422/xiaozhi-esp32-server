@@ -159,8 +159,8 @@ export default {
         fetchVoiceCloneList() {
             this.loading = true;
             const params = {
-                pageNum: this.currentPage,
-                pageSize: this.pageSize,
+                page: this.currentPage,
+                limit: this.pageSize,
                 name: this.searchName || "",
                 orderField: "create_date",
                 order: "desc"

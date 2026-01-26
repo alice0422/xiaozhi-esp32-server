@@ -3,24 +3,10 @@ package xiaozhi.modules.knowledge.service.impl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
+import java.util.*;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.core.io.AbstractResource;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -31,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import xiaozhi.common.exception.ErrorCode;
 import xiaozhi.common.exception.RenException;
 import xiaozhi.common.page.PageData;
+import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.knowledge.dto.KnowledgeFilesDTO;
 import xiaozhi.modules.knowledge.rag.KnowledgeBaseAdapter;
 import xiaozhi.modules.knowledge.rag.KnowledgeBaseAdapterFactory;
@@ -43,8 +30,6 @@ import xiaozhi.modules.knowledge.service.KnowledgeFilesService;
 public class KnowledgeFilesServiceImpl implements KnowledgeFilesService {
 
     private final KnowledgeBaseService knowledgeBaseService;
-    private RestTemplate restTemplate = new RestTemplate();
-    private ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public Map<String, Object> getRAGConfig(String ragModelId) {
@@ -55,31 +40,28 @@ public class KnowledgeFilesServiceImpl implements KnowledgeFilesService {
     public PageData<KnowledgeFilesDTO> getPageList(KnowledgeFilesDTO knowledgeFilesDTO, Integer page, Integer limit) {
         try {
             log.info("=== 开始获取文档列表 ===");
-            log.info("查询条件: datasetId={}, name={}, status={}, page={}, limit={}",
-                    knowledgeFilesDTO != null ? knowledgeFilesDTO.getDatasetId() : null,
-                    knowledgeFilesDTO != null ? knowledgeFilesDTO.getName() : null,
-                    knowledgeFilesDTO != null ? knowledgeFilesDTO.getStatus() : null,
-                    page, limit);
+            log.info("查询条件: datasetId={}, name={}, status={}, page={}, limit={}", knowledgeFilesDTO.getDatasetId(), knowledgeFilesDTO.getName(), knowledgeFilesDTO.getStatus(), page, limit);
 
             // 获取数据集ID
-            String datasetId = knowledgeFilesDTO != null ? knowledgeFilesDTO.getDatasetId() : null;
-            if (StringUtils.isBlank(datasetId)) {
+            String datasetId = knowledgeFilesDTO.getDatasetId();
+            if (ToolUtil.isEmpty(datasetId)) {
                 throw new RenException(ErrorCode.RAG_DATASET_ID_NOT_NULL);
             }
 
             // 获取RAG配置
             Map<String, Object> ragConfig = knowledgeBaseService.getRAGConfigByDatasetId(datasetId);
-
             // 提取适配器类型
             String adapterType = extractAdapterType(ragConfig);
-
             // 使用适配器工厂获取适配器实例
             KnowledgeBaseAdapter adapter = KnowledgeBaseAdapterFactory.getAdapter(adapterType, ragConfig);
 
             // 构建查询参数
             Map<String, Object> queryParams = new HashMap<>();
-            if (knowledgeFilesDTO != null && StringUtils.isNotBlank(knowledgeFilesDTO.getName())) {
+            if (ToolUtil.isNotEmpty(knowledgeFilesDTO.getName())) {
                 queryParams.put("keywords", knowledgeFilesDTO.getName());
+            }
+            if (ToolUtil.isNotEmpty(knowledgeFilesDTO.getStatus())) {
+                queryParams.put("status", knowledgeFilesDTO.getStatus());
             }
             if (page > 0) {
                 queryParams.put("page", page);
@@ -90,10 +72,8 @@ public class KnowledgeFilesServiceImpl implements KnowledgeFilesService {
 
             // 调用适配器获取文档列表
             PageData<KnowledgeFilesDTO> result = adapter.getDocumentList(datasetId, queryParams, page, limit);
-
             log.info("获取文档列表成功，共{}个文档，总数: {}", result.getList().size(), result.getTotal());
             return result;
-
         } catch (Exception e) {
             log.error("获取文档列表失败: {}", e.getMessage(), e);
             if (e instanceof RenException) {
@@ -421,57 +401,6 @@ public class KnowledgeFilesServiceImpl implements KnowledgeFilesService {
             throw new RenException(ErrorCode.RAG_API_ERROR, errorMessage);
         } finally {
             log.info("=== 根据documentId获取文档操作结束 ===");
-        }
-    }
-
-    @Override
-    public PageData<KnowledgeFilesDTO> getPageListByStatus(String datasetId, Integer status, Integer page,
-            Integer limit) {
-        if (StringUtils.isBlank(datasetId)) {
-            throw new RenException(ErrorCode.RAG_DATASET_ID_NOT_NULL);
-        }
-
-        log.info("=== 开始根据状态查询文档列表 ===");
-        log.info("datasetId: {}, status: {}, page: {}, limit: {}", datasetId, status, page, limit);
-
-        try {
-            // 获取RAG配置
-            Map<String, Object> ragConfig = knowledgeBaseService.getRAGConfigByDatasetId(datasetId);
-
-            // 提取适配器类型
-            String adapterType = extractAdapterType(ragConfig);
-
-            // 使用适配器工厂获取适配器实例
-            KnowledgeBaseAdapter adapter = KnowledgeBaseAdapterFactory.getAdapter(adapterType, ragConfig);
-
-            // 构建查询参数
-            Map<String, Object> queryParams = new HashMap<>();
-            if (page != null && page > 0) {
-                queryParams.put("page", page);
-            }
-            if (limit != null && limit > 0) {
-                queryParams.put("page_size", limit);
-            }
-            if (status != null) {
-                queryParams.put("status", status);
-            }
-
-            // 使用适配器获取文档列表
-            PageData<KnowledgeFilesDTO> pageData = adapter.getDocumentList(datasetId, queryParams, page, limit);
-
-            if (pageData != null) {
-                log.info("根据状态查询文档列表成功，datasetId: {}, 状态: {}, 文档数量: {}",
-                        datasetId, status, pageData.getList().size());
-                return pageData;
-            } else {
-                throw new RenException(ErrorCode.Knowledge_Base_RECORD_NOT_EXISTS);
-            }
-
-        } catch (Exception e) {
-            log.error("根据状态查询文档列表失败: {}", e.getMessage(), e);
-            throw new RenException(ErrorCode.RAG_API_ERROR, e.getMessage());
-        } finally {
-            log.info("=== 根据状态查询文档列表操作结束 ===");
         }
     }
 

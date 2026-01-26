@@ -2,9 +2,11 @@ import asyncio
 import base64
 import json
 from datetime import datetime
+import time
 from time import mktime
 import threading
 import re
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -22,6 +24,9 @@ logger = setup_logging()
 STATUS_FIRST_FRAME = 0  # 第一帧的标识
 STATUS_CONTINUE_FRAME = 1  # 中间帧标识
 STATUS_LAST_FRAME = 2  # 最后一帧的标识
+
+# 最大重试次数
+MAX_RETRY_COUNT = 3
 
 
 def _safe_json_dumps(obj: Any) -> str:
@@ -153,8 +158,30 @@ class ASRProvider(ASRProviderBase):
         self.server_ready = False
         self.last_frame_sent = False
         self._start_frame_sent = False
-        # 用于等待“最终识别结果”（跨线程安全：父类handle_voice_stop会在线程里调用speech_to_text）
+        # 用于等待"最终识别结果"（跨线程安全：父类handle_voice_stop会在线程里调用speech_to_text）
         self._final_event = threading.Event()
+
+        # ===== 并发控制锁 =====
+        # 用于保护状态变量的访问，防止多个音频包并发处理导致状态不一致
+        self._state_lock = asyncio.Lock()
+        # 标记是否正在启动连接，防止重复启动
+        self._connecting = False
+        # 重试计数器
+        self._retry_count = 0
+        # 标记是否需要重新连接（收到10004/10042错误后设置）
+        self._need_reconnect = False
+        # 重试前等待时间（秒），使用指数退避
+        self._retry_delay = 0.0
+        # 上次重试时间
+        self._last_retry_time = 0.0
+
+        # ===== 会话唯一标识 =====
+        # 每个实例生成唯一的实例ID，用于区分不同设备的ASR实例
+        self._instance_id = uuid.uuid4().hex[:8]
+        # 每次识别会话的唯一ID，在_start_recognition时生成
+        self._session_id: Optional[str] = None
+        # 当前会话的bizId，在_start_recognition时生成
+        self._current_biz_id: Optional[str] = None
 
         # iFlytek IAT wpgs（动态修正）合并缓存：sn -> 文本片段
         self._wpgs_parts: Dict[int, str] = {}
@@ -174,11 +201,14 @@ class ASRProvider(ASRProviderBase):
         # 文档：请求头 x-gateway-apikey，Api key前面要加Bearer
         self.api_key_header_format = config.get("api_key_header_format", "x-gateway-apikey")
 
-        # bizId 必填（网关返回 schema validation 要求 header.bizId）
-        self.biz_id = config.get("biz_id") or (self.api_key[:8] if self.api_key else "default")
+        # bizId 前缀（可选配置，主要用于服务端日志识别）
+        # 实际使用时会自动添加实例ID和会话ID，确保每个会话唯一
+        # 如果不配置，默认使用 "xz" 前缀
+        self._biz_id_prefix = config.get("biz_id") or "xz"
 
-        # 可选：有些后端也会校验 app_id
-        self.app_id = config.get("app_id", "")
+        # app_id（可选，有些后端会校验）
+        # 如果不配置，使用 api_key 前8位
+        self.app_id = config.get("app_id") or (self.api_key[:8] if self.api_key else "")
 
         # 是否使用自定义路径（调试用）
         self.use_custom_path = bool(config.get("use_custom_path", False))
@@ -267,46 +297,115 @@ class ASRProvider(ASRProviderBase):
             conn.asr_audio_for_voiceprint = []
         conn.asr_audio_for_voiceprint.append(audio)
 
-        if audio_have_voice and self.asr_ws is None and not self.is_processing:
-            try:
-                await self._start_recognition(conn)
-                # 注意：_start_recognition 会发送首帧并 flush 一段缓存音频。
-                # 这里直接返回，避免同一包音频既作为首帧又作为 continue 帧重复发送。
-                return
-            except Exception as e:
-                logger.bind(tag=TAG).error(f"建立ASR连接失败: {e}")
-                await self._cleanup(conn)
-                return
-
-        if self.asr_ws and self.is_processing and audio:
-            # 连接建立后，如果之前没有成功发送首帧，则使用当前音频作为首帧并立即进入实时流式发送
-            if not self._start_frame_sent:
+        # ===== 使用锁保护状态访问，防止并发竞态条件 =====
+        async with self._state_lock:
+            # ===== 检查是否需要重新连接（收到10004/10042错误后）=====
+            if self._need_reconnect and self._retry_count <= MAX_RETRY_COUNT:
+                current_time = time.time()
+                time_since_last_retry = current_time - self._last_retry_time
+                
+                # 检查是否已经过了重试延迟时间
+                if time_since_last_retry < self._retry_delay:
+                    remaining = self._retry_delay - time_since_last_retry
+                    # 使用INFO级别日志，方便观察延迟是否生效
+                    logger.bind(tag=TAG).info(f"重试延迟中，已等待 {time_since_last_retry:.1f}s，还需等待 {remaining:.1f}s")
+                    return
+                
+                logger.bind(tag=TAG).info(
+                    f"重试延迟完成，准备重新建立连接 "
+                    f"(重试{self._retry_count}/{MAX_RETRY_COUNT}，实际等待{time_since_last_retry:.1f}s)"
+                )
+                self._need_reconnect = False
+                # 清理旧连接状态
+                self.asr_ws = None
+                self.is_processing = False
+                self._connecting = False
+            
+            # ===== 检查是否需要启动连接 =====
+            should_start = (
+                audio_have_voice 
+                and self.asr_ws is None 
+                and not self.is_processing 
+                and not self._connecting
+                and self._retry_count <= MAX_RETRY_COUNT
+            )
+            
+            if should_start:
+                # 检查是否有足够的音频数据（至少2个有效包）
+                valid_audio_count = 0
+                if hasattr(conn, "asr_audio") and conn.asr_audio:
+                    for pkt in conn.asr_audio[-10:]:
+                        if pkt and len(pkt) > 0:
+                            valid_audio_count += 1
+                
+                # 至少需要2个有效音频包才启动连接
+                if valid_audio_count < 2:
+                    logger.bind(tag=TAG).debug(f"音频缓冲不足({valid_audio_count}个包)，等待更多音频数据")
+                    return
+                
+                # 标记正在连接，防止重复启动
+                self._connecting = True
+                
                 try:
-                    pcm_frame = self.decoder.decode(audio, 960)
-                    await self._send_audio_frame(pcm_frame, STATUS_FIRST_FRAME)
-                    self._start_frame_sent = True
-                    self.server_ready = True
-                    logger.bind(tag=TAG).info("已补发首帧，开始实时识别")
-                    await asyncio.sleep(0.05)
+                    await self._start_recognition(conn)
+                    # 注意：_start_recognition 会发送首帧并 flush 一段缓存音频。
+                    # 这里直接返回，避免同一包音频既作为首帧又作为 continue 帧重复发送。
+                    return
                 except Exception as e:
-                    logger.bind(tag=TAG).warning(f"补发首帧失败: {e}")
+                    logger.bind(tag=TAG).error(f"建立ASR连接失败: {e}")
+                    self._retry_count += 1
                     await self._cleanup(conn)
-                return
+                    return
+                finally:
+                    self._connecting = False
 
-            # 首帧后立即发送后续音频，保证实时性
-            if self.server_ready:
-                try:
-                    pcm_frame = self.decoder.decode(audio, 960)
-                    await self._send_audio_frame(pcm_frame, STATUS_CONTINUE_FRAME)
-                except Exception as e:
-                    logger.bind(tag=TAG).warning(f"发送音频数据时发生错误: {e}")
-                    await self._cleanup(conn)
+            # ===== 检查连接和首帧状态 =====
+            if self.asr_ws and self.is_processing and audio:
+                # 连接建立后，如果之前没有成功发送首帧，则使用当前音频作为首帧
+                if not self._start_frame_sent:
+                    try:
+                        pcm_frame = self.decoder.decode(audio, 960)
+                        await self._send_audio_frame(pcm_frame, STATUS_FIRST_FRAME)
+                        self._start_frame_sent = True
+                        self.server_ready = True
+                        logger.bind(tag=TAG).info("已补发首帧，开始实时识别")
+                        await asyncio.sleep(0.05)
+                    except Exception as e:
+                        logger.bind(tag=TAG).warning(f"补发首帧失败: {e}")
+                        await self._cleanup(conn)
+                    return
+
+                # ===== 只有在首帧已发送且服务器就绪时才发送后续帧 =====
+                if self._start_frame_sent and self.server_ready:
+                    try:
+                        pcm_frame = self.decoder.decode(audio, 960)
+                        await self._send_audio_frame(pcm_frame, STATUS_CONTINUE_FRAME)
+                    except Exception as e:
+                        logger.bind(tag=TAG).warning(f"发送音频数据时发生错误: {e}")
+                        await self._cleanup(conn)
+                else:
+                    # 首帧还没发送完成，跳过这个音频包
+                    logger.bind(tag=TAG).debug(f"等待首帧发送完成，跳过当前音频包 (start_frame_sent={self._start_frame_sent}, server_ready={self.server_ready})")
 
     async def _start_recognition(self, conn):
+        """启动识别会话，建立WebSocket连接并发送首帧
+        
+        关键：必须确保首帧在任何后续帧之前发送成功，否则服务端会报10004错误
+        """
         self.is_processing = True
         self._final_event.clear()
         self._start_frame_sent = False
         self._wpgs_parts.clear()
+        self._need_reconnect = False
+        
+        # ===== 为每次识别会话生成唯一的会话ID和bizId =====
+        # 这确保多个设备同时使用时不会产生冲突
+        self._session_id = uuid.uuid4().hex[:12]
+        # bizId 格式: 前缀_实例ID_会话ID前4位，确保全局唯一
+        # 例如: xz_a1b2c3d4_e5f6 或 XiaoZhi_a1b2c3d4_e5f6
+        self._current_biz_id = f"{self._biz_id_prefix}_{self._instance_id}_{self._session_id[:4]}"
+        
+        logger.bind(tag=TAG).info(f"开始新的识别会话: instance={self._instance_id}, session={self._session_id}, bizId={self._current_biz_id}")
 
         ws_url = self.create_url()
         headers = self._get_headers()
@@ -321,16 +420,26 @@ class ASRProvider(ASRProviderBase):
                     safe_headers[k] = v
             logger.bind(tag=TAG).info(f"使用headers: {safe_headers}")
 
-        self.asr_ws = await websockets.connect(
-            ws_url,
-            additional_headers=headers,
-            max_size=1000000000,
-            ping_interval=None,
-            ping_timeout=None,
-            close_timeout=10,
-        )
+        try:
+            self.asr_ws = await asyncio.wait_for(
+                websockets.connect(
+                    ws_url,
+                    additional_headers=headers,
+                    max_size=1000000000,
+                    ping_interval=None,
+                    ping_timeout=None,
+                    close_timeout=10,
+                ),
+                timeout=10.0  # 连接超时10秒
+            )
+        except asyncio.TimeoutError:
+            logger.bind(tag=TAG).error("ASR WebSocket连接超时")
+            raise
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"ASR WebSocket连接失败: {e}")
+            raise
 
-        logger.bind(tag=TAG).info("ASR WebSocket连接已建立")
+        logger.bind(tag=TAG).info(f"ASR WebSocket连接已建立 (instance={self._instance_id}, session={self._session_id})")
 
         self.server_ready = False
         self.last_frame_sent = False
@@ -339,63 +448,133 @@ class ASRProvider(ASRProviderBase):
 
         self.forward_task = asyncio.create_task(self._forward_results(conn))
 
+        # ===== 关键：必须确保首帧发送成功 =====
         # 发送首帧：必须确保音频非空，否则网关会报 schema 校验失败并导致后续 10004 未启动
-        # 重要：按时间顺序发送。首帧必须是“最早的一段音频”，后续再按顺序发送缓存，避免乱序导致识别反复/偏差。
+        # 重要：按时间顺序发送。首帧必须是"最早的一段音频"，后续再按顺序发送缓存
         buffered: List[bytes] = []
         if getattr(conn, "asr_audio", None):
             for pkt in conn.asr_audio[-10:]:
-                if pkt:
+                if pkt and len(pkt) > 0:
                     buffered.append(pkt)
 
         if buffered:
             first_audio = buffered[0]
-            pcm_frame = self.decoder.decode(first_audio, 960)
-            await self._send_audio_frame(pcm_frame, STATUS_FIRST_FRAME)
-            self._start_frame_sent = True
-            self.server_ready = True
-            logger.bind(tag=TAG).info("已发送首帧，开始实时识别")
+            try:
+                pcm_frame = self.decoder.decode(first_audio, 960)
+                if not pcm_frame or len(pcm_frame) == 0:
+                    # 解码失败，使用静音占位
+                    pcm_frame = b"\x00\x00" * 960
+                    logger.bind(tag=TAG).warning("首帧解码为空，使用静音占位")
+                
+                await self._send_audio_frame(pcm_frame, STATUS_FIRST_FRAME)
+                self._start_frame_sent = True
+                self.server_ready = True
+                logger.bind(tag=TAG).info("已发送首帧，开始实时识别")
 
-            # 发送缓存（跳过空包，保持顺序）
-            await asyncio.sleep(0.05)
-            for cached_audio in buffered[1:]:
-                try:
-                    pcm_frame = self.decoder.decode(cached_audio, 960)
-                    await self._send_audio_frame(pcm_frame, STATUS_CONTINUE_FRAME)
-                except Exception as e:
-                    logger.bind(tag=TAG).warning(f"发送缓存音频失败: {e}")
-                    break
+                # 发送缓存（跳过空包，保持顺序）
+                await asyncio.sleep(0.05)
+                for cached_audio in buffered[1:]:
+                    try:
+                        pcm_frame = self.decoder.decode(cached_audio, 960)
+                        if pcm_frame and len(pcm_frame) > 0:
+                            await self._send_audio_frame(pcm_frame, STATUS_CONTINUE_FRAME)
+                    except Exception as e:
+                        logger.bind(tag=TAG).warning(f"发送缓存音频失败: {e}")
+                        break
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"发送首帧失败: {e}")
+                # 首帧发送失败，需要清理连接
+                raise
         else:
-            # 没有有效音频就先不启动，等 receive_audio 进来再发首帧
-            logger.bind(tag=TAG).warning("未找到有效首帧音频，等待后续音频包再启动")
-            self.server_ready = False
+            # 没有有效音频，使用静音作为首帧（确保引擎启动）
+            logger.bind(tag=TAG).warning("未找到有效首帧音频，使用静音启动引擎")
+            try:
+                # 发送一个静音首帧，确保引擎启动
+                silent_frame = b"\x00\x00" * 960  # 960 samples of silence
+                await self._send_audio_frame(silent_frame, STATUS_FIRST_FRAME)
+                self._start_frame_sent = True
+                self.server_ready = True
+                logger.bind(tag=TAG).info("已发送静音首帧，等待实际音频")
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"发送静音首帧失败: {e}")
+                raise
 
     async def _send_audio_frame(self, audio_data: bytes, status: int):
+        """发送音频帧到ASR服务
+        
+        Args:
+            audio_data: PCM音频数据
+            status: 帧状态 (0=首帧, 1=中间帧, 2=末帧)
+        
+        Raises:
+            Exception: 发送失败时抛出异常
+        """
         if not self.asr_ws:
-            return
+            logger.bind(tag=TAG).warning(f"发送帧失败：WebSocket未连接 (status={status})")
+            raise ConnectionError("WebSocket未连接")
+
+        # ===== 关键检查：确保首帧在后续帧之前发送 =====
+        if status != STATUS_FIRST_FRAME and not self._start_frame_sent:
+            logger.bind(tag=TAG).error(f"尝试在首帧发送前发送帧 (status={status})，这会导致10004错误")
+            raise RuntimeError("必须先发送首帧")
 
         # CMHK 网关 schema 要求 payload.audio.audio 至少 1 个字符（空音频会被拒绝）
-        # 因此如果出现空音频，使用 1 字节静音占位（AA==），避免首帧/末帧被拒导致 10004 未启动。
-        if not audio_data:
+        # 因此如果出现空音频，使用静音占位，避免首帧/末帧被拒导致 10004 未启动。
+        if not audio_data or len(audio_data) == 0:
             audio_data = b"\x00\x00"
 
         audio_b64 = base64.b64encode(audio_data).decode("utf-8")
 
         # app_id 为空时用 api_key 前8位占位
         app_id_value = self.app_id or self.api_key[:8]
+        
+        # 使用当前会话的唯一bizId，确保多设备不冲突
+        current_biz_id = getattr(self, '_current_biz_id', None) or f"{self._biz_id_prefix}_{self._instance_id}"
+        
+        # 生成 traceId - 文档要求必传，用于日志跟踪
+        # 格式: {instance_id}_{session_id}_{timestamp}
+        trace_id = f"{self._instance_id}_{self._session_id or 'init'}_{int(time.time() * 1000)}"
 
+        # ===== 严格按照文档格式构建请求 =====
+        # 文档: header.traceId(必传), header.appId(非必传), header.bizId(必传), header.status
+        # 文档: parameter.engine(非必传), payload.audio.audio(必传)
         frame_data = {
             "header": {
-                "status": status,
-                "app_id": app_id_value,
-                "bizId": self.biz_id,
+                "traceId": trace_id,        # 必传 - 日志跟踪id
+                "appId": app_id_value,      # 非必传 - 应用系统Id（注意是驼峰）
+                "bizId": current_biz_id,    # 必传 - 业务Id
+                "status": status,           # 状态: 0=首帧, 1=中间帧, 2=末帧
             },
-            "parameter": {"iat": self.iat_params},
+            "parameter": {
+                "engine": self.iat_params   # 引擎透传参数（文档用engine，不是iat）
+            },
             "payload": {
-                "audio": {"audio": audio_b64, "sample_rate": 16000, "encoding": "raw"}
+                "audio": {
+                    "audio": audio_b64,     # 必传 - base64编码音频
+                    "sample_rate": 16000,
+                    "encoding": "raw"
+                }
             },
         }
 
-        await self.asr_ws.send(json.dumps(frame_data, ensure_ascii=False))
+        # 首帧时输出完整的请求结构（便于调试）
+        if status == STATUS_FIRST_FRAME:
+            # 隐藏音频数据（太长），只显示结构
+            debug_frame = {
+                "header": frame_data["header"],
+                "parameter": frame_data["parameter"],
+                "payload": {"audio": {"audio": f"[{len(audio_b64)} chars]", "sample_rate": 16000, "encoding": "raw"}}
+            }
+            logger.bind(tag=TAG).debug(f"首帧请求结构: {_safe_json_dumps(debug_frame)}")
+
+        try:
+            await self.asr_ws.send(json.dumps(frame_data, ensure_ascii=False))
+        except websockets.ConnectionClosed as e:
+            logger.bind(tag=TAG).error(f"发送帧失败，连接已关闭: {e}")
+            raise
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"发送帧失败: {e}")
+            raise
 
         if status == STATUS_LAST_FRAME:
             self.last_frame_sent = True
@@ -650,11 +829,78 @@ class ASRProvider(ASRProviderBase):
                         if should_merge:
                             effective_text = self._apply_wpgs_merge(res_obj, text)
 
-                    if code != 0:
-                        header = result.get("header") or {}
-                        logger.bind(tag=TAG).error(
-                            f"识别错误，错误码: {code}, 消息: {header.get('message', header.get('msg', ''))}"
-                        )
+                    # ===== 检查服务端错误 =====
+                    header = result.get("header") or {}
+                    error_msg = header.get('message', header.get('msg', ''))
+                    
+                    # 检查 message 中是否包含隐藏的错误（即使 code=0）
+                    # 例如: "atom.sRecognizerStart failed! ret = 10042"
+                    has_hidden_error = False
+                    hidden_error_code = None
+                    if error_msg and ("failed" in error_msg.lower() or "error" in error_msg.lower()):
+                        # 尝试从 message 中提取错误码
+                        match = re.search(r'ret\s*=\s*(\d+)', error_msg)
+                        if match:
+                            hidden_error_code = int(match.group(1))
+                            has_hidden_error = True
+                            logger.bind(tag=TAG).warning(
+                                f"检测到隐藏错误: code={code}, message={error_msg}, hidden_error_code={hidden_error_code}"
+                            )
+                    
+                    # 处理明确的错误码或隐藏错误
+                    if code != 0 or has_hidden_error:
+                        actual_error_code = code if code != 0 else hidden_error_code
+                        
+                        if code != 0:
+                            logger.bind(tag=TAG).error(
+                                f"识别错误，错误码: {code}, 消息: {error_msg}"
+                            )
+                        
+                        # ===== 特殊处理10004错误：引擎未启动 =====
+                        # ===== 特殊处理10042错误：服务端启动识别器失败（可能是并发限制）=====
+                        if actual_error_code in (10004, 10042):
+                            error_type = "引擎未启动" if actual_error_code == 10004 else "识别器启动失败(可能并发超限)"
+                            logger.bind(tag=TAG).error(
+                                f"检测到{actual_error_code}错误（{error_type}）。"
+                                f"当前状态: instance={self._instance_id}, session={self._session_id}, "
+                                f"start_frame_sent={self._start_frame_sent}, server_ready={self.server_ready}"
+                            )
+                            
+                            self._retry_count += 1
+                            
+                            if self._retry_count <= MAX_RETRY_COUNT:
+                                # 计算重试延迟：指数退避，避免快速重试加剧并发问题
+                                # 基础延迟2秒，给服务端足够时间释放资源
+                                retry_delay = min(2.0 * (2 ** (self._retry_count - 1)), 10.0)
+                                logger.bind(tag=TAG).info(
+                                    f"将在 {retry_delay:.1f}s 后重新建立连接 "
+                                    f"(重试{self._retry_count}/{MAX_RETRY_COUNT})"
+                                )
+                                
+                                # 标记需要重新连接
+                                self._need_reconnect = True
+                                self._retry_delay = retry_delay
+                                # 关键：记录当前时间，作为延迟的起点
+                                self._last_retry_time = time.time()
+                                
+                                # 重置状态，允许重新连接
+                                self.is_processing = False
+                                self.server_ready = False
+                                self._start_frame_sent = False
+                                
+                                # 关闭当前WebSocket连接，等待服务端释放资源
+                                if self.asr_ws:
+                                    try:
+                                        await self.asr_ws.close()
+                                        logger.bind(tag=TAG).info("已关闭WebSocket连接，等待服务端释放资源")
+                                    except Exception as close_err:
+                                        logger.bind(tag=TAG).warning(f"关闭WebSocket时出错: {close_err}")
+                                    self.asr_ws = None
+                            else:
+                                logger.bind(tag=TAG).error(f"已达到最大重试次数({MAX_RETRY_COUNT})，放弃识别")
+                                self._need_reconnect = False
+                            # 退出循环
+                            break
                         continue
 
                     if effective_text:
@@ -714,37 +960,71 @@ class ASRProvider(ASRProviderBase):
             self.is_processing = False
 
     async def handle_voice_stop(self, conn, asr_audio_task: List[bytes]):
+        """处理语音停止事件，发送末帧并等待最终结果"""
         try:
-            if self.asr_ws and self.is_processing:
-                # 如果还未成功发送首帧，尽量用最后一段音频补发首帧，避免后续直接发末帧触发 NOT_START
-                if not self._start_frame_sent:
-                    first_pkt = None
-                    for pkt in reversed(asr_audio_task or []):
-                        if pkt:
-                            first_pkt = pkt
-                            break
-                    if first_pkt:
-                        pcm_frame = self.decoder.decode(first_pkt, 960)
-                        await self._send_audio_frame(pcm_frame, STATUS_FIRST_FRAME)
-                        self._start_frame_sent = True
-                        self.server_ready = True
-                        await asyncio.sleep(0.05)
+            # ===== 使用锁保护，确保与receive_audio不会并发冲突 =====
+            async with self._state_lock:
+                if self.asr_ws and self.is_processing:
+                    # 如果还未成功发送首帧，尽量用最后一段音频补发首帧，避免后续直接发末帧触发 NOT_START
+                    if not self._start_frame_sent:
+                        logger.bind(tag=TAG).warning("handle_voice_stop: 首帧未发送，尝试补发")
+                        first_pkt = None
+                        for pkt in reversed(asr_audio_task or []):
+                            if pkt and len(pkt) > 0:
+                                first_pkt = pkt
+                                break
+                        if first_pkt:
+                            try:
+                                pcm_frame = self.decoder.decode(first_pkt, 960)
+                                if not pcm_frame or len(pcm_frame) == 0:
+                                    pcm_frame = b"\x00\x00" * 960
+                                await self._send_audio_frame(pcm_frame, STATUS_FIRST_FRAME)
+                                self._start_frame_sent = True
+                                self.server_ready = True
+                                logger.bind(tag=TAG).info("handle_voice_stop: 已补发首帧")
+                                await asyncio.sleep(0.05)
+                            except Exception as e:
+                                logger.bind(tag=TAG).error(f"handle_voice_stop: 补发首帧失败: {e}")
+                                # 如果首帧发送失败，使用静音首帧
+                                try:
+                                    await self._send_audio_frame(b"\x00\x00" * 960, STATUS_FIRST_FRAME)
+                                    self._start_frame_sent = True
+                                    self.server_ready = True
+                                    await asyncio.sleep(0.05)
+                                except Exception:
+                                    logger.bind(tag=TAG).error("handle_voice_stop: 静音首帧也发送失败，放弃")
+                                    return
+                        else:
+                            # 没有有效音频包，使用静音首帧
+                            try:
+                                await self._send_audio_frame(b"\x00\x00" * 960, STATUS_FIRST_FRAME)
+                                self._start_frame_sent = True
+                                self.server_ready = True
+                                await asyncio.sleep(0.05)
+                            except Exception:
+                                logger.bind(tag=TAG).error("handle_voice_stop: 无法发送首帧，放弃")
+                                return
 
-                last_frame = b""
-                if asr_audio_task:
-                    last_audio = asr_audio_task[-1]
-                    last_frame = self.decoder.decode(last_audio, 960)
-                await self._send_audio_frame(last_frame, STATUS_LAST_FRAME)
-                
-                # 等待最终识别结果，避免把中间结果提前送入LLM
-                # 超时时间可配置，默认3秒（增加默认值以确保完整识别）
-                # 使用 or 确保空值、None、0 都会使用默认值
+                    # ===== 发送末帧 =====
+                    try:
+                        last_frame = b""
+                        if asr_audio_task:
+                            last_audio = asr_audio_task[-1]
+                            if last_audio and len(last_audio) > 0:
+                                last_frame = self.decoder.decode(last_audio, 960)
+                        if not last_frame or len(last_frame) == 0:
+                            last_frame = b"\x00\x00" * 960
+                        await self._send_audio_frame(last_frame, STATUS_LAST_FRAME)
+                    except Exception as e:
+                        logger.bind(tag=TAG).error(f"发送末帧失败: {e}")
+                    
+            # ===== 等待最终识别结果（在锁外等待，避免阻塞其他操作）=====
+            if self.is_processing:
                 raw_timeout = self.config.get("final_wait_timeout")
                 wait_timeout = float(raw_timeout) if raw_timeout else 3.0
-                logger.bind(tag=TAG).info(f"等待最终识别结果，超时时间: {wait_timeout}s (配置值: {raw_timeout})")
+                logger.bind(tag=TAG).info(f"等待最终识别结果，超时时间: {wait_timeout}s")
                 
                 try:
-                    # 使用 asyncio 友好的方式等待
                     waited = 0.0
                     check_interval = 0.1
                     while waited < wait_timeout:
@@ -760,7 +1040,6 @@ class ASRProvider(ASRProviderBase):
                     logger.bind(tag=TAG).warning(f"等待最终结果时发生异常: {e}")
                 
                 # 确保使用最佳文本作为最终结果
-                # 优先级：has_final_result 的 best_text > 最长的 best_text > 当前 text
                 if self.has_final_result and self.best_text:
                     self.text = self.best_text
                     logger.bind(tag=TAG).info(f"使用最终识别结果: {self.text}")
@@ -773,6 +1052,8 @@ class ASRProvider(ASRProviderBase):
             await super().handle_voice_stop(conn, asr_audio_task)
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理语音停止失败: {e}")
+            import traceback
+            logger.bind(tag=TAG).debug(f"异常详情: {traceback.format_exc()}")
 
     def stop_ws_connection(self):
         if self.asr_ws:
@@ -781,6 +1062,12 @@ class ASRProvider(ASRProviderBase):
         self.is_processing = False
 
     async def _cleanup(self, conn):
+        """清理ASR会话状态，确保所有资源被正确释放
+        
+        注意：此方法可能在错误处理时被调用，需要确保幂等性
+        """
+        logger.bind(tag=TAG).debug("开始清理ASR会话状态")
+        
         try:
             # 不要在cleanup里发送空音频的末帧（会触发 schema 校验失败）
             # 如果需要结束，由 handle_voice_stop 发送带音频的末帧。
@@ -789,6 +1076,7 @@ class ASRProvider(ASRProviderBase):
         except Exception:
             pass
 
+        # ===== 重置所有状态变量 =====
         self.is_processing = False
         self.server_ready = False
         self.last_frame_sent = False
@@ -796,23 +1084,37 @@ class ASRProvider(ASRProviderBase):
         self.has_final_result = False
         self._final_event.clear()
         self._start_frame_sent = False
+        self._connecting = False      # 重置连接中标志
+        self._retry_count = 0         # 重置重试计数
+        self._need_reconnect = False  # 重置重连标志
+        self._retry_delay = 0.0       # 重置重试延迟
+        self._last_retry_time = 0.0   # 重置上次重试时间
+        self._session_id = None       # 清除会话ID
+        self._current_biz_id = None   # 清除当前bizId
         self._wpgs_parts.clear()
 
+        # ===== 取消转发任务 =====
         if self.forward_task and not self.forward_task.done():
             self.forward_task.cancel()
             try:
                 await asyncio.wait_for(self.forward_task, timeout=1.0)
-            except Exception:
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
+            except Exception as e:
+                logger.bind(tag=TAG).debug(f"取消转发任务时发生异常: {e}")
             self.forward_task = None
 
+        # ===== 关闭WebSocket连接 =====
         if self.asr_ws:
             try:
                 await asyncio.wait_for(self.asr_ws.close(), timeout=2.0)
-            except Exception:
+            except (asyncio.TimeoutError, websockets.ConnectionClosed):
                 pass
+            except Exception as e:
+                logger.bind(tag=TAG).debug(f"关闭WebSocket时发生异常: {e}")
             self.asr_ws = None
 
+        # ===== 清理连接相关的音频缓存 =====
         if conn:
             if hasattr(conn, "asr_audio_for_voiceprint"):
                 conn.asr_audio_for_voiceprint = []
@@ -820,6 +1122,8 @@ class ASRProvider(ASRProviderBase):
                 conn.asr_audio = []
             if hasattr(conn, "has_valid_voice"):
                 conn.has_valid_voice = False
+        
+        logger.bind(tag=TAG).debug("ASR会话状态清理完成")
 
     async def speech_to_text(self, opus_data, session_id, audio_format):
         result = self.text
@@ -827,14 +1131,36 @@ class ASRProvider(ASRProviderBase):
         return result, None
 
     async def close(self):
-        if self.asr_ws:
-            await self.asr_ws.close()
-            self.asr_ws = None
+        """关闭ASR连接，释放所有资源"""
+        logger.bind(tag=TAG).info(f"关闭ASR连接 (instance={self._instance_id})")
+        
+        # 重置所有状态
+        self.is_processing = False
+        self.server_ready = False
+        self._start_frame_sent = False
+        self._connecting = False
+        self._retry_count = 0
+        self._need_reconnect = False
+        self._retry_delay = 0.0
+        self._last_retry_time = 0.0
+        self._session_id = None
+        self._current_biz_id = None
+        
         if self.forward_task:
             self.forward_task.cancel()
             try:
-                await self.forward_task
+                await asyncio.wait_for(self.forward_task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
             except Exception:
                 pass
             self.forward_task = None
-        self.is_processing = False
+            
+        if self.asr_ws:
+            try:
+                await asyncio.wait_for(self.asr_ws.close(), timeout=2.0)
+            except (asyncio.TimeoutError, websockets.ConnectionClosed):
+                pass
+            except Exception:
+                pass
+            self.asr_ws = None

@@ -18,7 +18,6 @@ export function loadConfig() {
     const deviceMacInput = document.getElementById('deviceMac');
     const deviceNameInput = document.getElementById('deviceName');
     const clientIdInput = document.getElementById('clientId');
-    const tokenInput = document.getElementById('token');
     const otaUrlInput = document.getElementById('otaUrl');
 
     // 从localStorage加载MAC地址，如果没有则生成新的
@@ -40,11 +39,6 @@ export function loadConfig() {
         clientIdInput.value = savedClientId;
     }
 
-    const savedToken = localStorage.getItem('xz_tester_token');
-    if (savedToken) {
-        tokenInput.value = savedToken;
-    }
-
     const savedOtaUrl = localStorage.getItem('xz_tester_otaUrl');
     if (savedOtaUrl) {
         otaUrlInput.value = savedOtaUrl;
@@ -56,23 +50,24 @@ export function saveConfig() {
     const deviceMacInput = document.getElementById('deviceMac');
     const deviceNameInput = document.getElementById('deviceName');
     const clientIdInput = document.getElementById('clientId');
-    const tokenInput = document.getElementById('token');
 
     localStorage.setItem('xz_tester_deviceMac', deviceMacInput.value);
     localStorage.setItem('xz_tester_deviceName', deviceNameInput.value);
     localStorage.setItem('xz_tester_clientId', clientIdInput.value);
-    localStorage.setItem('xz_tester_token', tokenInput.value);
 }
 
 // 获取配置值
 export function getConfig() {
-    const deviceMac = document.getElementById('deviceMac').value.trim();
+    // 从DOM获取值
+    const deviceMac = document.getElementById('deviceMac')?.value.trim() || '';
+    const deviceName = document.getElementById('deviceName')?.value.trim() || '';
+    const clientId = document.getElementById('clientId')?.value.trim() || '';
+
     return {
         deviceId: deviceMac,  // 使用MAC地址作为deviceId
-        deviceName: document.getElementById('deviceName').value.trim(),
-        deviceMac: deviceMac,
-        clientId: document.getElementById('clientId').value.trim(),
-        token: document.getElementById('token').value.trim()
+        deviceName,
+        deviceMac,
+        clientId
     };
 }
 
